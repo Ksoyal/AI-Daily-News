@@ -50,7 +50,8 @@ def main():
         # 2. Summarize
         logger.info("[2/3] Generating report...")
         report = generate_report(news)
-        logger.info(f"Report generated ({len(report)} chars)")
+        logger.info(f"Report generated: headline='{report['headline']}', "
+                    f"tags={report['tags']}, body={len(report['content'])} chars")
 
         # 3. Publish
         logger.info("[3/3] Pushing to Notion...")
@@ -58,7 +59,8 @@ def main():
         logger.info("Published successfully")
 
         # Success notification
-        notify("✅ AI晨报推送成功", f"共 {len(news)} 条新闻，日报 {len(report)} 字符")
+        notify(f"✅ {report['headline']}",
+               f"共 {len(news)} 条新闻 | 标签 {'/'.join(report['tags'])}\n\n{report['content'][:500]}")
         logger.info("=== All done ===")
 
     except Exception as e:

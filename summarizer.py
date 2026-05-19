@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -8,30 +9,46 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """你是一个资深的全球资讯主编。请将输入的新闻列表进行去重、提炼，并严格按照以下 Markdown 格式输出日报。
-【输出格式要求】
-1. 必须使用标准的 Markdown 语法（只使用 #, ##, -, **）。
-2. 不要输出任何开场白或结尾语，直接输出正文。
-3. 严格按照以下板块组织内容，如果某个板块没有相关新闻，则直接省略该板块：
+SYSTEM_PROMPT = """你是一个资深的全球资讯主编。请将输入的新闻列表进行去重、合并同类新闻，并严格按照以下格式输出高质量的日报。
 
-## 🌟 一句话晨报
-（用一句话总结今天全球最重要的一件事）
+【输出格式】
+严格遵守以下格式，只输出正文，不要任何额外说明：
+
+HEADLINE: <今天最重要的一条新闻标题，不超过30字，作为日报标题和头版头条>
+TAGS: <标签1>, <标签2>, <标签3>
+
+---
+
+## 🌟 今日要闻
+（用 3-5 句话概述今天全球最重要的 1-3 件事，让读者快速把握今日脉络）
 
 ## 🌍 全球时政
-- **[新闻标题]**：精简的一句话摘要。（来源：XXX）
+- **[新闻标题]**：2-3 句话摘要，包含事件要点、关键背景和潜在影响。（来源：XXX）
 
 ## 💻 科技与 AI
-- **[新闻标题]**：精简的一句话摘要。（来源：XXX）
+- **[新闻标题]**：2-3 句话摘要，尽量包含技术细节、行业影响或数据。（来源：XXX）
 
 ## 📈 财经与市场
-- **[新闻标题]**：精简的一句话摘要。（来源：XXX）
+- **[新闻标题]**：2-3 句话摘要，尽量包含具体数据、市场反应或趋势分析。（来源：XXX）
 
 ## 🔥 社会热点
-- **[新闻标题]**：精简的一句话摘要。（来源：XXX）"""
+- **[新闻标题]**：2-3 句话摘要，包含事件背景和社会反响。（来源：XXX）
+
+【总体原则】
+- 去重：同一事件的报道合并为一条，综合多个来源的信息
+- 深度：每条新闻写 2-3 句话，包含关键事实、数据、影响或背景
+- 可读：让读者不用点开原文就能理解事件全貌
+- 语言：专业但不枯燥，类似财新/端传媒的编辑风格
+- 标签：TAGS 提取 2-3 个今日新闻最核心的话题关键词，如"AI治理"、"中美关系"、"资本市场"
+- 板块内新闻不要超过 8 条，超出则只保留最重要的"""
 
 
 def generate_report(news_list):
-    """Send news list to LLM and return a formatted Markdown daily report."""
+    """Send news list to LLM and return structured daily report.
+
+    Returns:
+        dict with keys: headline (str), tags (list[str]), content (str — markdown body)
+    """
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -53,13 +70,13 @@ def generate_report(news_list):
 
     choice = resp.choices[0]
     finish_reason = choice.finish_reason
-    content = choice.message.content
+    raw = choice.message.content
 
     logger.info(f"OpenRouter response: model={resp.model}, finish_reason={finish_reason}, "
-                f"content_length={len(content) if content else 0}, "
+                f"content_length={len(raw) if raw else 0}, "
                 f"usage={resp.usage}")
 
-    if content is None:
+    if raw is None:
         logger.error(f"Empty content from OpenRouter. finish_reason={finish_reason}, "
                      f"message={choice.message}")
         raise RuntimeError(
@@ -67,7 +84,25 @@ def generate_report(news_list):
             "The free model may be overloaded — try switching to a paid model."
         )
 
-    return content
+    # Parse structured output: HEADLINE, TAGS, ---, then body
+    headline_match = re.search(r'^HEADLINE:\s*(.+)$', raw, re.MULTILINE)
+    tags_match = re.search(r'^TAGS:\s*(.+)$', raw, re.MULTILINE)
+
+    headline = headline_match.group(1).strip() if headline_match else "AI 晨报"
+    tags_raw = tags_match.group(1).strip() if tags_match else ""
+    tags = [t.strip() for t in tags_raw.replace("，", ",").split(",") if t.strip()][:3]
+
+    # Extract body after --- separator
+    body_match = re.search(r'^---\s*\n(.+)$', raw, re.MULTILINE | re.DOTALL)
+    content = body_match.group(1).strip() if body_match else raw
+
+    logger.info(f"Parsed: headline='{headline[:40]}...', tags={tags}")
+
+    return {
+        "headline": headline,
+        "tags": tags,
+        "content": content,
+    }
 
 
 if __name__ == "__main__":
@@ -103,4 +138,7 @@ if __name__ == "__main__":
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     report = generate_report(fake_news)
-    print(report)  # output the actual report content, not a log
+    print(f"HEADLINE: {report['headline']}")
+    print(f"TAGS: {report['tags']}")
+    print(f"---")
+    print(report['content'])

@@ -59,8 +59,12 @@ def _md_to_notion_blocks(md_text):
     return blocks
 
 
-def _get_title_property_name(token, database_id):
-    """Fetch database schema and return the name of the title column."""
+def _get_database_properties(token, database_id):
+    """Fetch database schema and return (title_col, date_col, multi_select_col).
+
+    title_col is mandatory — raises ValueError if missing.
+    date_col and multi_select_col are optional — returns None if no matching column.
+    """
     url = f"https://api.notion.com/v1/databases/{database_id}"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -68,17 +72,30 @@ def _get_title_property_name(token, database_id):
     }
     resp = requests.get(url, headers=headers)
     resp.raise_for_status()
+    title_col = None
+    date_col = None
+    multi_select_col = None
     for name, prop in resp.json().get("properties", {}).items():
-        if prop.get("type") == "title":
-            return name
-    raise ValueError("Database schema has no 'title' property — check NOTION_DATABASE_ID")
+        ptype = prop.get("type")
+        if ptype == "title" and title_col is None:
+            title_col = name
+        elif ptype == "date" and date_col is None:
+            date_col = name
+        elif ptype == "multi_select" and multi_select_col is None:
+            multi_select_col = name
+    if title_col is None:
+        raise ValueError("Database schema has no 'title' property — check NOTION_DATABASE_ID")
+    return title_col, date_col, multi_select_col
 
 
-def push_to_notion(markdown_content):
+def push_to_notion(report):
     """Create a new page in the Notion database with the daily report.
 
-    Page title is set to e.g. '2026-05-19 AI 晨报'.
-    The markdown body is converted to Notion blocks and written as page children.
+    Args:
+        report: dict with keys:
+            - headline (str):  AI-generated page title
+            - tags (list[str]):  2-3 topic tags for multi_select
+            - content (str):  Markdown daily report body
     """
     token = os.getenv("NOTION_TOKEN")
     database_id = os.getenv("NOTION_DATABASE_ID")
@@ -86,8 +103,27 @@ def push_to_notion(markdown_content):
         raise ValueError("NOTION_TOKEN and NOTION_DATABASE_ID must be set in .env")
 
     today = datetime.now().strftime("%Y-%m-%d")
-    title_name = _get_title_property_name(token, database_id)
-    blocks = _md_to_notion_blocks(markdown_content)
+    title_col, date_col, tags_col = _get_database_properties(token, database_id)
+    blocks = _md_to_notion_blocks(report["content"])
+
+    # Build page properties dynamically
+    properties = {
+        title_col: {
+            "title": [{"text": {"content": report["headline"]}}]
+        }
+    }
+
+    if date_col:
+        properties[date_col] = {"date": {"start": today}}
+    else:
+        logger.info("No date property found in database — skipping 发布日期")
+
+    if tags_col and report.get("tags"):
+        properties[tags_col] = {
+            "multi_select": [{"name": tag} for tag in report["tags"]]
+        }
+    elif not tags_col:
+        logger.info("No multi_select property found in database — skipping 核心话题")
 
     url = "https://api.notion.com/v1/pages"
     headers = {
@@ -97,11 +133,7 @@ def push_to_notion(markdown_content):
     }
     body = {
         "parent": {"database_id": database_id},
-        "properties": {
-            title_name: {
-                "title": [{"text": {"content": f"{today} AI 晨报"}}]
-            }
-        },
+        "properties": properties,
         "children": blocks,
     }
 
