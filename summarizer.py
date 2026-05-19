@@ -51,7 +51,23 @@ def generate_report(news_list):
         temperature=0.3,
     )
 
-    return resp.choices[0].message.content
+    choice = resp.choices[0]
+    finish_reason = choice.finish_reason
+    content = choice.message.content
+
+    logger.info(f"OpenRouter response: model={resp.model}, finish_reason={finish_reason}, "
+                f"content_length={len(content) if content else 0}, "
+                f"usage={resp.usage}")
+
+    if content is None:
+        logger.error(f"Empty content from OpenRouter. finish_reason={finish_reason}, "
+                     f"message={choice.message}")
+        raise RuntimeError(
+            f"OpenRouter returned empty content (finish_reason={finish_reason}). "
+            "The free model may be overloaded — try switching to a paid model."
+        )
+
+    return content
 
 
 if __name__ == "__main__":
