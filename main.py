@@ -6,6 +6,8 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
+from config import NOTIFY_TIMEOUT
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -31,7 +33,7 @@ def notify(title, desp=""):
         logger.info("PUSH_KEY not set, skipping notification")
         return
     try:
-        resp = requests.post(SC_URL, data={"title": title, "desp": desp})
+        resp = requests.post(SC_URL, data={"title": title, "desp": desp}, timeout=NOTIFY_TIMEOUT)
         resp.raise_for_status()
         logger.info(f"Push sent: {title}")
     except requests.RequestException as e:

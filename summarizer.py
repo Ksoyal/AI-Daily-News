@@ -5,6 +5,8 @@ import sys
 from openai import OpenAI
 from dotenv import load_dotenv
 
+from config import AI_MODEL, AI_TEMPERATURE, AI_TIMEOUT, AI_MAX_INPUT_CHARS, AI_MIN_PER_SOURCE
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,61 @@ TAGS: <标签1>, <标签2>, <标签3>
 - 板块内新闻不要超过 8 条，超出则只保留最重要的"""
 
 
+def _build_news_text(news_list):
+    """Build the news text for the LLM prompt, respecting the token budget.
+
+    Uses a two-pass approach:
+      1. Take an even share from each source (round-robin).
+      2. If budget remains, fill remaining slots in original order.
+
+    Returns the formatted text and a count of entries included.
+    """
+    # Group entries by source
+    by_source = {}
+    for item in news_list:
+        by_source.setdefault(item["source"], []).append(item)
+
+    source_names = list(by_source.keys())
+    indices = {s: 0 for s in source_names}
+    selected = []
+
+    # Round-robin: pick one from each source until budget exhausted or all picked
+    budget = AI_MAX_INPUT_CHARS
+    while True:
+        added = False
+        for src in source_names:
+            src_entries = by_source[src]
+            idx = indices[src]
+            if idx >= len(src_entries):
+                continue
+            entry = src_entries[idx]
+            line = f"[{len(selected) + 1}] 标题：{entry['title']}\n链接：{entry['link']}\n来源：{entry['source']}\n\n"
+            if budget - len(line) < 0:
+                # Check if this source still hasn't met the floor
+                if idx < AI_MIN_PER_SOURCE and idx < len(src_entries):
+                    # Truncate the title to fit
+                    max_title_len = budget - len(f"[{len(selected) + 1}] 标题：\n链接：{entry['link']}\n来源：{entry['source']}\n\n")
+                    if max_title_len > 10:
+                        truncated_title = entry['title'][:max_title_len] + "..."
+                        line = f"[{len(selected) + 1}] 标题：{truncated_title}\n链接：{entry['link']}\n来源：{entry['source']}\n\n"
+                        selected.append(line)
+                        budget -= len(line)
+                    indices[src] = idx + 1
+                    added = True
+                continue
+            selected.append(line)
+            budget -= len(line)
+            indices[src] = idx + 1
+            added = True
+        if not added:
+            break
+
+    news_text = "".join(selected).rstrip()
+    logger.info(f"Token budget: {AI_MAX_INPUT_CHARS - budget}/{AI_MAX_INPUT_CHARS} chars, "
+                f"{len(selected)} entries included (from {len(news_list)} total)")
+    return news_text
+
+
 def generate_report(news_list):
     """Send news list to LLM and return structured daily report.
 
@@ -52,20 +109,18 @@ def generate_report(news_list):
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.getenv("OPENROUTER_API_KEY"),
+        timeout=AI_TIMEOUT,
     )
 
-    news_text = "\n\n".join(
-        f"[{i + 1}] 标题：{item['title']}\n链接：{item['link']}\n来源：{item['source']}"
-        for i, item in enumerate(news_list)
-    )
+    news_text = _build_news_text(news_list)
 
     resp = client.chat.completions.create(
-        model="deepseek/deepseek-v4-flash:free",
+        model=AI_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"以下是今日新闻列表，请生成日报：\n\n{news_text}"},
         ],
-        temperature=0.3,
+        temperature=AI_TEMPERATURE,
     )
 
     choice = resp.choices[0]
@@ -107,6 +162,7 @@ def generate_report(news_list):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     # Fake data for testing the prompt output
     fake_news = [
         {
@@ -136,7 +192,6 @@ if __name__ == "__main__":
         },
     ]
 
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     report = generate_report(fake_news)
     print(f"HEADLINE: {report['headline']}")
     print(f"TAGS: {report['tags']}")

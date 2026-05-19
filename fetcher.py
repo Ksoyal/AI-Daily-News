@@ -1,21 +1,12 @@
 import logging
 import sys
 import feedparser
+import requests
 from datetime import datetime, timedelta, timezone
 
+from config import RSS_SOURCES, EXCLUDE_KEYWORDS, MAX_ENTRIES, FETCH_TIMEOUT
+
 logger = logging.getLogger(__name__)
-
-RSS_SOURCES = [
-    {"name": "纽约时报中文", "url": "https://cn.nytimes.com/rss/"},
-    {"name": "36氪",     "url": "https://36kr.com/feed"},
-    {"name": "BBC中文",  "url": "https://www.bbc.com/zhongwen/simp/index.xml"},
-    {"name": "FT中文网",  "url": "https://www.ftchinese.com/rss/news"},
-    {"name": "量子位",    "url": "https://www.qbitai.com/rss"},
-]
-
-EXCLUDE_KEYWORDS = ["娱乐", "明星", "八卦", "体育"]
-
-MAX_ENTRIES = 50
 
 
 def _parse_published(entry):
@@ -31,16 +22,21 @@ def fetch_news():
     """Fetch news from configured RSS sources and return filtered entries.
 
     Returns a list of dicts with keys: title, link, source, published (ISO str).
-    Filters applied:
-      1. Published within the last 24 hours (UTC).
-      2. Title contains none of the exclude keywords.
-      3. Capped at 30 entries, newest first.
+    Each source failure is logged but does not block other sources.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     entries = []
 
     for src in RSS_SOURCES:
-        feed = feedparser.parse(src["url"])
+        try:
+            resp = requests.get(src["url"], timeout=FETCH_TIMEOUT)
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.content)
+        except requests.RequestException as e:
+            logger.warning(f"Failed to fetch {src['name']} ({src['url']}): {e}")
+            continue
+
+        source_count = 0
         for entry in feed.entries:
             published = _parse_published(entry)
             if published is None:
@@ -58,6 +54,9 @@ def fetch_news():
                 "source": src["name"],
                 "published": published.isoformat(),
             })
+            source_count += 1
+
+        logger.info(f"{src['name']}: {source_count} entries accepted")
 
     entries.sort(key=lambda e: e["published"], reverse=True)
     return entries[:MAX_ENTRIES]
@@ -67,7 +66,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     news = fetch_news()
-    logger.info(f"共获取 {len(news)} 条新闻:")
+    logger.info(f"Total: {len(news)} entries")
     for i, item in enumerate(news, 1):
         logger.info(f"{i}. [{item['source']}] {item['title']}")
         logger.info(f"   {item['link']}")

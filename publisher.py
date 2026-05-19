@@ -2,15 +2,39 @@ import logging
 import os
 import re
 import sys
+import time
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+
+from config import NOTION_VERSION, HTTP_TIMEOUT, HTTP_RETRIES, HTTP_RETRY_BACKOFF
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-NOTION_VERSION = "2022-06-28"
+
+def _retry_request(method, url, **kwargs):
+    """Wrapper around requests.request with retry on 429/5xx."""
+    last_exc = None
+    for attempt in range(HTTP_RETRIES + 1):
+        try:
+            resp = requests.request(method, url, timeout=HTTP_TIMEOUT, **kwargs)
+            if resp.status_code in (429, 502, 503, 504) and attempt < HTTP_RETRIES:
+                delay = HTTP_RETRY_BACKOFF[attempt]
+                logger.warning(f"{method} {url} → {resp.status_code}, retrying in {delay}s (attempt {attempt + 1}/{HTTP_RETRIES})")
+                time.sleep(delay)
+                continue
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt < HTTP_RETRIES:
+                delay = HTTP_RETRY_BACKOFF[attempt]
+                logger.warning(f"{method} {url} → {e}, retrying in {delay}s (attempt {attempt + 1}/{HTTP_RETRIES})")
+                time.sleep(delay)
+            else:
+                raise last_exc
 
 
 def _parse_rich_text(text):
@@ -70,8 +94,7 @@ def _get_database_properties(token, database_id):
         "Authorization": f"Bearer {token}",
         "Notion-Version": NOTION_VERSION,
     }
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
+    resp = _retry_request("GET", url, headers=headers)
     title_col = None
     date_col = None
     multi_select_col = None
@@ -88,8 +111,38 @@ def _get_database_properties(token, database_id):
     return title_col, date_col, multi_select_col
 
 
+def _find_today_page(token, database_id, date_col, today):
+    """Check if a page with today's date already exists in the database.
+
+    Returns the page URL if found, None otherwise.
+    """
+    if not date_col:
+        return None
+
+    url = f"https://api.notion.com/v1/databases/{database_id}/query"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_VERSION,
+    }
+    body = {
+        "filter": {
+            "property": date_col,
+            "date": {"equals": today},
+        }
+    }
+    resp = _retry_request("POST", url, headers=headers, json=body)
+    results = resp.json().get("results", [])
+    if results:
+        page = results[0]
+        return page.get("url", f"https://notion.so/{page['id'].replace('-', '')}")
+    return None
+
+
 def push_to_notion(report):
     """Create a new page in the Notion database with the daily report.
+
+    Skips creation if a page with today's date already exists (idempotent).
 
     Args:
         report: dict with keys:
@@ -104,6 +157,13 @@ def push_to_notion(report):
 
     today = datetime.now().strftime("%Y-%m-%d")
     title_col, date_col, tags_col = _get_database_properties(token, database_id)
+
+    # Idempotency: skip if today's page already exists
+    existing_url = _find_today_page(token, database_id, date_col, today)
+    if existing_url:
+        logger.info(f"Today's page already exists: {existing_url} — skipping")
+        return {"url": existing_url, "skipped": True}
+
     blocks = _md_to_notion_blocks(report["content"])
 
     # Build page properties dynamically
@@ -137,18 +197,10 @@ def push_to_notion(report):
         "children": blocks,
     }
 
-    try:
-        resp = requests.post(url, headers=headers, json=body)
-        resp.raise_for_status()
-        page = resp.json()
-        logger.info(f"Notion page created: {page.get('url', page.get('id'))}")
-        return page
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Notion API request failed: {e}")
-        if e.response is not None:
-            logger.error(f"Status: {e.response.status_code}")
-            logger.error(f"Body: {e.response.text}")
-        raise
+    resp = _retry_request("POST", url, headers=headers, json=body)
+    page = resp.json()
+    logger.info(f"Notion page created: {page.get('url', page.get('id'))}")
+    return page
 
 
 if __name__ == "__main__":
