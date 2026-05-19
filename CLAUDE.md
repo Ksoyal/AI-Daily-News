@@ -25,4 +25,4 @@ AI 资讯聚合项目：从 RSS 源抓取 AI 相关新闻，通过 OpenRouter AP
 1. ~~修复或替换联合早报 RSS 源 URL~~ ✅ 已替换为纽约时报中文
 2. ~~添加日志模块，替换 print 为 logging~~ ✅ 已完成
 3. ~~添加更多高质量 RSS 源~~ ✅ 已新增 FT中文网、量子位，共5个源
-4. 将仓库推送到 GitHub 并配置 Secrets
+4. ~~将仓库推送到 GitHub 并配置 Secrets~~ ✅ 已推送至 https://github.com/Ksoyal/AI-Daily-News，Secrets 全部配置完毕
