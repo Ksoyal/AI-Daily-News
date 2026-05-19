@@ -1,0 +1,31 @@
+name: AI Daily News
+
+on:
+  schedule:
+    # 北京时间 8:00 = UTC 0:00
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily news pipeline
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          PUSH_KEY: ${{ secrets.PUSH_KEY }}
+        run: python main.py
