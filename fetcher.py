@@ -15,7 +15,7 @@ RSS_SOURCES = [
 
 EXCLUDE_KEYWORDS = ["娱乐", "明星", "八卦", "体育"]
 
-MAX_ENTRIES = 30
+MAX_ENTRIES = 50
 
 
 def _parse_published(entry):
