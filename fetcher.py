@@ -4,7 +4,7 @@ import feedparser
 import requests
 from datetime import datetime, timedelta, timezone
 
-from config import RSS_SOURCES, EXCLUDE_KEYWORDS, MAX_ENTRIES, FETCH_TIMEOUT
+from config import RSS_SOURCES, EXCLUDE_KEYWORDS, MAX_ENTRIES, FETCH_TIMEOUT, FETCH_USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,8 @@ def fetch_news():
 
     for src in RSS_SOURCES:
         try:
-            resp = requests.get(src["url"], timeout=FETCH_TIMEOUT)
+            resp = requests.get(src["url"], timeout=FETCH_TIMEOUT,
+                                headers={"User-Agent": FETCH_USER_AGENT})
             resp.raise_for_status()
             feed = feedparser.parse(resp.content)
         except requests.RequestException as e:

@@ -1,11 +1,10 @@
 import logging
-import os
 import re
 import sys
 from openai import OpenAI
 from dotenv import load_dotenv
 
-from config import AI_MODEL, AI_TEMPERATURE, AI_TIMEOUT, AI_MAX_INPUT_CHARS, AI_MIN_PER_SOURCE
+from config import AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_TEMPERATURE, AI_TIMEOUT, AI_MAX_INPUT_CHARS, AI_MIN_PER_SOURCE
 
 load_dotenv()
 
@@ -107,8 +106,8 @@ def generate_report(news_list):
         dict with keys: headline (str), tags (list[str]), content (str — markdown body)
     """
     client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
+        base_url=AI_BASE_URL,
+        api_key=AI_API_KEY,
         timeout=AI_TIMEOUT,
     )
 
