@@ -11,6 +11,10 @@ RSS_SOURCES = [
     {"name": "BBC中文",      "url": "https://www.bbc.com/zhongwen/simp/index.xml"},
     {"name": "FT中文网",      "url": "https://www.ftchinese.com/rss/news"},
     {"name": "量子位",        "url": "https://www.qbitai.com/rss"},
+    {"name": "德国之声中文",  "url": "https://rss.dw.com/rdf/rss-chi-all"},
+    {"name": "日经中文网",    "url": "https://cn.nikkei.com/rss.html"},
+    {"name": "爱范儿",        "url": "https://www.ifanr.com/feed"},
+    {"name": "端传媒",        "url": "https://theinitium.com/feed/"},
 ]
 
 EXCLUDE_KEYWORDS = ["娱乐", "明星", "八卦", "体育"]

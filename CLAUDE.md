@@ -10,7 +10,7 @@ AI 资讯聚合管线：RSS 抓取 → Google AI Studio AI 摘要 → Notion 数
 config.py           ── 集中配置（RSS源/AI参数/超时/预算），环境变量可覆盖
     │
     ▼
-RSS feeds (5 sources)
+RSS feeds (9 sources)
     │
     ▼
 fetcher.py          ── 30s 超时抓取、User-Agent 伪装、单源异常隔离、24h 过滤、关键词黑名单、50条截断
@@ -40,7 +40,7 @@ main.py             ── 串联 + Server酱推送通知（10s timeout）
 - 所有值均可通过环境变量覆盖，`.env` 在模块 import 时自动加载
 
 ### `fetcher.py` — RSS 抓取
-- `RSS_SOURCES`: 5 个源（纽约时报中文/36氪/BBC中文/FT中文网/量子位）
+- `RSS_SOURCES`: 9 个源（纽约时报中文/36氪/BBC中文/FT中文网/量子位/德国之声中文/日经中文网/爱范儿/端传媒）
 - 用 `requests.get(url, timeout=30)` 先拉 XML 再 `feedparser.parse(string)`
 - 带 `User-Agent` 头伪装浏览器，避免 403 拦截
 - 每个源独立 try/except，失败只打 warning 不阻断其他源
