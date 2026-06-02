@@ -13,7 +13,7 @@ config.py           ── 集中配置（RSS源/AI参数/超时/预算），环
 RSS feeds (9 sources)
     │
     ▼
-fetcher.py          ── 30s 超时抓取、User-Agent 伪装、单源异常隔离、24h 过滤、关键词黑名单、50条截断
+fetcher.py          ── 30s 超时抓取、User-Agent 伪装、单源异常隔离、24h 过滤、关键词黑名单、100条截断
     │
     ▼
 summarizer.py       ── Google AI Studio (gemini-3-flash-preview, OpenAI 兼容端点, 60s timeout)
@@ -46,13 +46,13 @@ main.py             ── 串联 + Server酱推送通知（10s timeout）
 - 每个源独立 try/except，失败只打 warning 不阻断其他源
 - `_parse_published()`: 从 `published_parsed` 或 `updated_parsed` 提取 UTC 时间
 - `fetch_news()` → `list[dict]`，每条含 `title/link/source/published`
-- 过滤: 24h 窗口 → 黑名单关键词（娱乐/明星/八卦/体育）→ 取最新 50 条
+- 过滤: 24h 窗口 → 黑名单关键词（娱乐/明星/八卦/体育）→ 取最新 100 条
 
 ### `summarizer.py` — AI 摘要
 - `generate_report(news_list)` → `dict{headline, tags, content}`
-- 模型: `gemini-3-flash-preview`，Google AI Studio OpenAI 兼容端点，temperature=0.3
-- `_build_news_text()`: 按源轮询选取条目，32K chars 字符预算，超预算时截断标题以保证每个源至少保留若干条
-- Prompt 要求 AI 输出 `HEADLINE: / TAGS: / ---` 三段式，正则解析
+- 模型: `gemini-3-flash-preview`，Google AI Studio OpenAI 兼容端点，temperature=0.5
+- `_build_news_text()`: 按源轮询选取条目，32K chars 字符预算，每源保底2条，避免单一来源占满上下文
+- Prompt 要求 AI 输出 `HEADLINE: / TAGS: / ---` 三段式，正则解析；日报含5大板块 + 🔍深度解读（150-250字独立编辑分析），目标2000-3000字
 - 防范: content 为 None 时抛出 RuntimeError
 
 ### `publisher.py` — Notion 发布
@@ -116,7 +116,7 @@ python -m pytest tests/test_fetcher.py -v  # 单模块
 | `NOTION_TOKEN` | Notion Integration Token |
 | `NOTION_DATABASE_ID` | 目标数据库 ID (32位 hex) |
 | `PUSH_KEY` | Server酱 SendKey (可选) |
-| `MAX_ENTRIES` | 最大抓取条数 (默认 50) |
+| `MAX_ENTRIES` | 最大抓取条数 (默认 100) |
 | `FETCH_TIMEOUT` | RSS 抓取超时秒数 (默认 30) |
 | `AI_MODEL` | 模型名 (默认 gemini-3-flash-preview) |
 | `AI_BASE_URL` | AI API 端点 (默认 Google AI Studio) |
@@ -138,3 +138,5 @@ python -m pytest tests/test_fetcher.py -v  # 单模块
 - **Token 预算控制**: 按源轮询截断新闻列表，确保每个源至少保留若干条，避免单一来源占满上下文
 - **配置外部化**: 所有可调参数集中在 config.py，支持环境变量覆盖，无需改代码即可调整
 - **User-Agent 伪装**: 部分 RSS 源（如量子位）会封默认 UA，配置独立的 User-Agent 头解决
+- **深度解读板块**: 日报不仅有条目摘要，还有 AI 编辑挑选当天最重要事件写150-250字独立分析，提供观点和趋势判断
+- **较高温度参数**: temperature=0.5 而非极保守的0.3，让 AI 语言更生动、有编辑判断力，类似财新风格
