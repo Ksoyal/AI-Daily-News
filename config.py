@@ -19,7 +19,7 @@ RSS_SOURCES = [
 
 EXCLUDE_KEYWORDS = ["娱乐", "明星", "八卦", "体育"]
 
-MAX_ENTRIES = int(os.getenv("MAX_ENTRIES", "50"))
+MAX_ENTRIES = int(os.getenv("MAX_ENTRIES", "100"))
 
 FETCH_TIMEOUT = int(os.getenv("FETCH_TIMEOUT", "30"))
 FETCH_USER_AGENT = os.getenv(
@@ -33,7 +33,7 @@ FETCH_USER_AGENT = os.getenv(
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
 AI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 AI_MODEL = os.getenv("AI_MODEL", "gemini-3-flash-preview")
-AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.3"))
+AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.5"))
 AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
 AI_MAX_INPUT_CHARS = int(os.getenv("AI_MAX_INPUT_CHARS", "32000"))
 # Per-source floor: when truncating for token budget, try to keep at least
