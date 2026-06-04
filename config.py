@@ -20,7 +20,6 @@ RSS_SOURCES = [
     {"name": "BBC中文",      "urls": ["https://www.bbc.com/zhongwen/simp/index.xml"]},
     {"name": "FT中文网",      "urls": [
         "https://www.ftchinese.com/rss/news",
-        "https://rsshub.app/ft/chinese/hotstory",
     ]},
     {"name": "量子位",        "urls": ["https://www.qbitai.com/rss"]},
     {"name": "德国之声中文",  "urls": ["https://rss.dw.com/rdf/rss-chi-all"]},
