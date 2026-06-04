@@ -17,5 +17,8 @@ build/
 # IDE
 .vscode/
 .idea/
+
+# Obsidian (user settings, not project content)
+notes/.obsidian/
 *.swp
 *.swo
