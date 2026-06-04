@@ -1,0 +1,196 @@
+{
+  "main": {
+    "id": "26a5ede03b205aaa",
+    "type": "split",
+    "children": [
+      {
+        "id": "8c8a0e5d28a194e1",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "9dcee9aa976e885b",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "03-配置系统-config.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "03-配置系统-config"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "e03ceb8a2ea2fbb0",
+    "type": "split",
+    "children": [
+      {
+        "id": "4d840b8666106745",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "d8fee933ab7c5717",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "文件列表"
+            }
+          },
+          {
+            "id": "2c68a05eb6a29e7a",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "搜索"
+            }
+          },
+          {
+            "id": "3422f84258a81b6a",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "书签"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "b8c60da20d461bf2",
+    "type": "split",
+    "children": [
+      {
+        "id": "2a43796ea905a766",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "7d4375ed6c88e6f2",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "03-配置系统-config.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "03-配置系统-config 的反向链接列表"
+            }
+          },
+          {
+            "id": "5cf07663bf49856f",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "03-配置系统-config.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "03-配置系统-config 的出链列表"
+            }
+          },
+          {
+            "id": "99d078fddc6a8adf",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "标签"
+            }
+          },
+          {
+            "id": "f77f6a70b1d88fa8",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "添加笔记属性"
+            }
+          },
+          {
+            "id": "c220957eb3b2ab6e",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "03-配置系统-config.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "03-配置系统-config 的大纲"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:打开快速切换": false,
+      "graph:查看关系图谱": false,
+      "canvas:新建白板": false,
+      "daily-notes:打开/创建今天的日记": false,
+      "templates:插入模板": false,
+      "command-palette:打开命令面板": false,
+      "bases:新建数据库": false
+    }
+  },
+  "active": "9dcee9aa976e885b",
+  "lastOpenFiles": [
+    "00-目录.md.tmp.11796.f5d4c80d3e1f",
+    "00-目录.md.tmp.11796.28883eef8892",
+    "10-Python语言基础.md",
+    "10-Python语言基础.md.tmp.11796.297b25f71dd1",
+    "02-项目架构总览.md",
+    "01-环境搭建.md",
+    "00-目录.md"
+  ]
+}
