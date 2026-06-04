@@ -1,0 +1,33 @@
+name: Precise Trigger
+
+# 每 15 分钟检查一次，北京时间 8:00 准点触发主流水线
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check if it's 00:00 UTC (Beijing 08:00)
+        id: check
+        run: |
+          HOUR=$(date -u +%H)
+          MINUTE=$(date -u +%M)
+          echo "UTC time: ${HOUR}:${MINUTE}"
+          if [ "$HOUR" = "00" ] && [ "$MINUTE" -lt "15" ]; then
+            echo "fire=true" >> $GITHUB_OUTPUT
+            echo "✅ Within trigger window, firing main workflow..."
+          else
+            echo "fire=false" >> $GITHUB_OUTPUT
+            echo "⏳ Not trigger time yet, skipping."
+          fi
+
+      - name: Trigger main workflow
+        if: steps.check.outputs.fire == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_PAT }}
+        run: |
+          gh workflow run daily_run.yml
+          echo "🚀 Main workflow triggered!"
