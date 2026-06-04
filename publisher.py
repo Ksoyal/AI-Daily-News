@@ -53,12 +53,23 @@ def _parse_rich_text(text):
 
 
 def _md_to_notion_blocks(md_text):
-    """Convert the daily-report Markdown into Notion block objects."""
+    """Convert the daily-report Markdown into Notion block objects.
+
+    Supports: H2, H3, bullet, quote, divider, bold.
+    Decorative lines (all special-chars) → divider.
+    """
     blocks = []
     for line in md_text.strip().split("\n"):
         stripped = line.strip()
         if not stripped:
             continue
+
+        # Divider: --- or decorative lines (━━━, ▔▔▔, ▁▁▁)
+        if stripped == "---" or _is_decorative_line(stripped):
+            blocks.append({"type": "divider", "divider": {}})
+            continue
+
+        # Heading 2
         if stripped.startswith("## "):
             blocks.append({
                 "type": "heading_2",
@@ -66,21 +77,65 @@ def _md_to_notion_blocks(md_text):
                     "rich_text": [{"type": "text", "text": {"content": stripped[3:]}}]
                 },
             })
-        elif stripped.startswith("- "):
+            continue
+
+        # Heading 3
+        if stripped.startswith("### "):
             blocks.append({
-                "type": "bulleted_list_item",
-                "bulleted_list_item": {
+                "type": "heading_3",
+                "heading_3": {
+                    "rich_text": [{"type": "text", "text": {"content": stripped[4:]}}]
+                },
+            })
+            continue
+
+        # Quote
+        if stripped.startswith("> "):
+            blocks.append({
+                "type": "quote",
+                "quote": {
                     "rich_text": _parse_rich_text(stripped[2:])
                 },
             })
-        else:
+            continue
+
+        # Bullet: - | ▪ | ▸ | ● | •
+        bullet_re = r"^([-▪▸●•])\s+(.+)"
+        bullet_match = re.match(bullet_re, stripped)
+        if bullet_match:
             blocks.append({
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": _parse_rich_text(stripped)
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": _parse_rich_text(bullet_match.group(2))
                 },
             })
+            continue
+
+        # Numbered item: ❶ ❷ ❸
+        numbered_re = r"^[❶-❿]\s+(.+)"
+        numbered_match = re.match(numbered_re, stripped)
+        if numbered_match:
+            blocks.append({
+                "type": "number_list_item",
+                "number_list_item": {
+                    "rich_text": _parse_rich_text(numbered_match.group(1))
+                },
+            })
+            continue
+
+        # Default: paragraph
+        blocks.append({
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": _parse_rich_text(stripped)
+            },
+        })
     return blocks
+
+
+def _is_decorative_line(line):
+    """Return True if the line is purely decorative (all special-chars and spaces)."""
+    return bool(re.match(r'^[\s▁▔━─══║╔╗╚╝╠╣╦╩╬═·•▪▸●◂]+$', line))
 
 
 def _get_database_properties(token, database_id):
