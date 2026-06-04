@@ -28,13 +28,24 @@ def fetch_news():
     entries = []
 
     for src in RSS_SOURCES:
-        try:
-            resp = requests.get(src["url"], timeout=FETCH_TIMEOUT,
-                                headers={"User-Agent": FETCH_USER_AGENT})
-            resp.raise_for_status()
-            feed = feedparser.parse(resp.content)
-        except requests.RequestException as e:
-            logger.warning(f"Failed to fetch {src['name']} ({src['url']}): {e}")
+        # Support fallback URLs: try each in order until one succeeds
+        urls = src.get("urls") or [src["url"]]
+        feed = None
+        last_error = None
+        for url in urls:
+            try:
+                resp = requests.get(url, timeout=FETCH_TIMEOUT,
+                                    headers={"User-Agent": FETCH_USER_AGENT})
+                resp.raise_for_status()
+                feed = feedparser.parse(resp.content)
+                if url != urls[0]:
+                    logger.info(f"{src['name']}: fell back to {url}")
+                break
+            except requests.RequestException as e:
+                last_error = e
+                continue
+        if feed is None:
+            logger.warning(f"Failed to fetch {src['name']} (tried {len(urls)} URL(s), last: {last_error})")
             continue
 
         source_count = 0

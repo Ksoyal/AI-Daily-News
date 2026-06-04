@@ -10,15 +10,26 @@ PROJECT_DIR = Path(__file__).resolve().parent
 
 # ── RSS ──────────────────────────────────────────
 RSS_SOURCES = [
-    {"name": "纽约时报中文", "url": "https://cn.nytimes.com/rss/"},
-    {"name": "36氪",         "url": "https://36kr.com/feed"},
-    {"name": "BBC中文",      "url": "https://www.bbc.com/zhongwen/simp/index.xml"},
-    {"name": "FT中文网",      "url": "https://www.ftchinese.com/rss/news"},
-    {"name": "量子位",        "url": "https://www.qbitai.com/rss"},
-    {"name": "德国之声中文",  "url": "https://rss.dw.com/rdf/rss-chi-all"},
-    {"name": "日经中文网",    "url": "https://cn.nikkei.com/rss.html"},
-    {"name": "爱范儿",        "url": "https://www.ifanr.com/feed"},
-    {"name": "端传媒",        "url": "https://theinitium.com/feed/"},
+    # Support fallback URLs: each source has a list of urls to try in order.
+    # The first URL that returns 200 is used; subsequent attempts log the failure and move on.
+    {"name": "纽约时报中文", "urls": [
+        "https://cn.nytimes.com/rss/",
+        "https://rsshub.app/nytimes/zh-Hans",
+    ]},
+    {"name": "36氪",         "urls": ["https://36kr.com/feed"]},
+    {"name": "BBC中文",      "urls": ["https://www.bbc.com/zhongwen/simp/index.xml"]},
+    {"name": "FT中文网",      "urls": [
+        "https://www.ftchinese.com/rss/news",
+        "https://rsshub.app/ft/chinese/hotstory",
+    ]},
+    {"name": "量子位",        "urls": ["https://www.qbitai.com/rss"]},
+    {"name": "德国之声中文",  "urls": ["https://rss.dw.com/rdf/rss-chi-all"]},
+    {"name": "日经中文网",    "urls": [
+        "https://cn.nikkei.com/rss.html",
+        "https://rsshub.app/nikkei/cn",
+    ]},
+    {"name": "爱范儿",        "urls": ["https://www.ifanr.com/feed"]},
+    {"name": "端传媒",        "urls": ["https://theinitium.com/feed/"]},
 ]
 
 EXCLUDE_KEYWORDS = ["娱乐", "明星", "八卦", "体育"]
