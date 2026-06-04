@@ -47,9 +47,9 @@ FETCH_USER_AGENT = os.getenv(
 # Google AI Studio (OpenAI-compatible endpoint)
 # Get key at https://aistudio.google.com/apikey
 # OpenRouter: base_url="https://openrouter.ai/api/v1", model="provider/model"
-AI_BASE_URL = os.getenv("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
-AI_API_KEY = os.getenv("AI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
-AI_MODEL = os.getenv("AI_MODEL", "gemini-3-flash-preview")
+AI_BASE_URL = os.getenv("AI_BASE_URL", "https://openrouter.ai/api/v1")
+AI_API_KEY = os.getenv("AI_API_KEY") or os.getenv("OPENROUTER_API_KEY") or os.getenv("GEMINI_API_KEY", "")
+AI_MODEL = os.getenv("AI_MODEL", "moonshotai/kimi-k2.6:free")
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.5"))
 AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
 AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "8192"))
