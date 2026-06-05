@@ -1,7 +1,8 @@
 import logging
 import re
 import sys
-from openai import OpenAI
+import time
+from openai import OpenAI, RateLimitError, APIConnectionError, InternalServerError
 
 from config import (AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_TEMPERATURE, AI_TIMEOUT,
                     AI_MAX_TOKENS, AI_MAX_INPUT_CHARS, AI_MIN_PER_SOURCE, AI_SYSTEM_PROMPT)
@@ -78,15 +79,28 @@ def generate_report(news_list):
 
     news_text = _build_news_text(news_list)
 
-    resp = client.chat.completions.create(
-        model=AI_MODEL,
-        messages=[
-            {"role": "system", "content": AI_SYSTEM_PROMPT},
-            {"role": "user", "content": f"以下是今日新闻列表，请生成日报：\n\n{news_text}"},
-        ],
-        temperature=AI_TEMPERATURE,
-        max_tokens=AI_MAX_TOKENS,
-    )
+    # Retry on transient errors (rate limit, connection, server errors)
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        try:
+            resp = client.chat.completions.create(
+                model=AI_MODEL,
+                messages=[
+                    {"role": "system", "content": AI_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"以下是今日新闻列表，请生成日报：\n\n{news_text}"},
+                ],
+                temperature=AI_TEMPERATURE,
+                max_tokens=AI_MAX_TOKENS,
+            )
+            break  # success → stop retrying
+        except (RateLimitError, APIConnectionError, InternalServerError) as e:
+            if attempt < max_retries:
+                delay = 2 ** (attempt + 3)  # 8, 16, 32 seconds
+                logger.warning(f"AI API {type(e).__name__}, retrying in {delay}s "
+                               f"(attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                raise
 
     choice = resp.choices[0]
     finish_reason = choice.finish_reason

@@ -27,7 +27,11 @@ jobs:
       - name: Trigger main workflow
         if: steps.check.outputs.fire == 'true'
         env:
-          GH_TOKEN: ${{ secrets.WORKFLOW_PAT }}
+          WORKFLOW_PAT: ${{ secrets.WORKFLOW_PAT }}
         run: |
-          gh workflow run daily_run.yml
+          curl -sL -X POST \
+            -H "Authorization: Bearer ${WORKFLOW_PAT}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Ksoyal/AI-Daily-News/dispatches \
+            -d '{"event_type":"daily_trigger"}'
           echo "🚀 Main workflow triggered!"
