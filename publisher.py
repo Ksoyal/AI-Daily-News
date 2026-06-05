@@ -126,8 +126,8 @@ def _md_to_notion_blocks(md_text):
         numbered_match = re.match(numbered_re, stripped)
         if numbered_match:
             blocks.append({
-                "type": "number_list_item",
-                "number_list_item": {
+                "type": "numbered_list_item",
+                "numbered_list_item": {
                     "rich_text": _parse_rich_text(numbered_match.group(1))
                 },
             })
