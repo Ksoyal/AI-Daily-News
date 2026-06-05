@@ -59,7 +59,7 @@ def _md_to_notion_blocks(md_text):
 | `### 标题` | `heading_3` | 中号三级标题 |
 | `> 引用` | `quote` | 左边竖线 + 缩进 |
 | `- 条目` | `bulleted_list_item` | · 圆点列表 |
-| `❶ 条目` | `number_list_item` | 1. 数字列表 |
+| `❶ 条目` | `numbered_list_item` | 1. 数字列表 |
 | 普通文本 | `paragraph` | 正文 |
 
 ### 粗体解析（正则拆分）
