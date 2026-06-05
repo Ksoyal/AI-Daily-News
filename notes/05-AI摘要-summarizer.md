@@ -101,18 +101,34 @@ def generate_report(news_list):
     
     news_text = _build_news_text(news_list)
     
-    resp = client.chat.completions.create(
-        model=AI_MODEL,          # "moonshotai/kimi-k2.6:free"
-        messages=[
-            {"role": "system", "content": AI_SYSTEM_PROMPT},   # 系统指令
-            {"role": "user",   "content": f"请生成日报:\n\n{news_text}"},  # 用户数据
-        ],
-        temperature=AI_TEMPERATURE,  # 0.5 — 有创造力但不胡编
-        max_tokens=AI_MAX_TOKENS,    # 最大输出 8192 tokens
-    )
+    # 重试 3 次（应对免费模型限流）
+    for attempt in range(4):
+        try:
+            resp = client.chat.completions.create(
+                model=AI_MODEL,          # "moonshotai/kimi-k2.6:free"
+                messages=[...],
+                temperature=AI_TEMPERATURE,
+                max_tokens=AI_MAX_TOKENS,
+            )
+            break  # 成功，退出重试循环
+        except RateLimitError as e:      # 429 限流
+            if attempt < 3:
+                delay = 2 ** (attempt + 3)  # 8, 16, 32 秒
+                time.sleep(delay)           # 等一会再试
+            else:
+                raise  # 重试耗尽，抛出异常
 ```
 
-**新概念**: 对话模型的消息结构
+**新概念**: 指数退避重试
+- 第 1 次失败 → 等 8s → 重试
+- 第 2 次失败 → 等 16s → 重试  
+- 第 3 次失败 → 等 32s → 重试
+- 第 4 次失败 → 放弃，抛出异常
+- 等待时间翻倍增长，避免持续冲击被限流的 API
+
+> [!note] 免费模型（如 Kimi K2.6 Free）在高峰期频繁被限流（429）。这个重试机制让任务不会因为一次 429 就崩溃——等到限流窗口过去后通常能成功。
+
+**基础概念**: 对话模型的消息结构
 ```
 messages = [
     {"role": "system", "content": "你是一个编辑..."},   ← 角色设定

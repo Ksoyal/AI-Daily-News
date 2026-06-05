@@ -55,6 +55,7 @@ trigger.py          ── 外部精准触发器（repository_dispatch API）
 - 模型: `moonshotai/kimi-k2.6:free` (OpenRouter)，OpenAI 兼容接口，temperature=0.5
 - `_build_news_text()`: 按源轮询选取条目，32K chars 字符预算，每源保底2条
 - Prompt 外部化在 `prompt.txt`，编辑器风格（见 Prompt 模块）
+- AI API 429 限流自动重试 3 次（8s/16s/32s 退避），免费模型过载不立即崩溃
 - 防范: content 为 None 时抛出 RuntimeError
 
 ### `prompt.txt` — AI 日报模板
@@ -65,7 +66,7 @@ trigger.py          ── 外部精准触发器（repository_dispatch API）
 
 ### `publisher.py` — Notion 发布
 - `push_to_notion(report)`: 接收 summarizer 输出的 dict
-- `_retry_request()`: 对 429/502/503/504 自动 3 次指数退避重试（1s/2s/4s）
+- `_retry_request()`: 对 429/5xx/连接错误自动 3 次指数退避重试（1s/2s/4s），4xx 不重试并记录响应体
 - `_find_today_page()`: 查询数据库是否已有当日页面，有则跳过创建（幂等性）
 - `_get_database_properties()`: 查询 schema，自动发现 title/date/multi_select 列
 - `_md_to_notion_blocks()`: Markdown→Notion Blocks — `##` → H2, `###` → H3, `-`/`▪`/`▸` → Bullet, `>` → Quote, `---`/装饰线 → Divider, `❶-❿` → Numbered List, `**bold**` → annotations

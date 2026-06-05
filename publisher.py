@@ -15,21 +15,31 @@ logger = logging.getLogger(__name__)
 
 
 def _retry_request(method, url, **kwargs):
-    """Wrapper around requests.request with retry on 429/5xx."""
+    """Wrapper around requests.request with retry on transitory errors only."""
+    RETRYABLE = (429, 502, 503, 504)
     last_exc = None
     for attempt in range(HTTP_RETRIES + 1):
         try:
             resp = requests.request(method, url, timeout=HTTP_TIMEOUT, **kwargs)
-            if resp.status_code in (429, 502, 503, 504) and attempt < HTTP_RETRIES:
+            # Retry only on transitory server errors (not 4xx — those are our fault)
+            if resp.status_code in RETRYABLE and attempt < HTTP_RETRIES:
                 delay = HTTP_RETRY_BACKOFF[attempt]
                 logger.warning(f"{method} {url} → {resp.status_code}, retrying in {delay}s (attempt {attempt + 1}/{HTTP_RETRIES})")
                 time.sleep(delay)
                 continue
+            # For 4xx, log the response body before raising (helps debug)
+            if 400 <= resp.status_code < 500:
+                logger.error(f"{method} {url} → {resp.status_code}: {resp.text[:500]}")
             resp.raise_for_status()
             return resp
         except requests.RequestException as e:
             last_exc = e
-            if attempt < HTTP_RETRIES:
+            # Only retry if it was a retryable status or a connection error
+            is_retryable = (
+                isinstance(e, requests.HTTPError) and e.response is not None
+                and e.response.status_code in RETRYABLE
+            ) or not isinstance(e, requests.HTTPError)  # Connection/timeout errors are retryable
+            if is_retryable and attempt < HTTP_RETRIES:
                 delay = HTTP_RETRY_BACKOFF[attempt]
                 logger.warning(f"{method} {url} → {e}, retrying in {delay}s (attempt {attempt + 1}/{HTTP_RETRIES})")
                 time.sleep(delay)

@@ -95,24 +95,30 @@ def _is_decorative_line(line):
 
 如果一行**全部**由装饰字符组成 → 转为 Notion 分隔线。空一行在 Markdown 中被打成 `continue`，保留排版呼吸感。
 
-### 重试机制
+### 重试机制（智能：不重试 4xx）
 
 ```python
 def _retry_request(method, url, **kwargs):
-    for attempt in range(HTTP_RETRIES + 1):     # 最多 4 次（初始 + 3 重试）
+    RETRYABLE = (429, 502, 503, 504)    # 只有这些才重试
+    for attempt in range(HTTP_RETRIES + 1):
         try:
-            resp = requests.request(method, url, timeout=HTTP_TIMEOUT, **kwargs)
-            if resp.status_code in (429, 502, 503, 504) and attempt < HTTP_RETRIES:
-                delay = HTTP_RETRY_BACKOFF[attempt]  # 1, 2, 4 秒
-                time.sleep(delay)
-                continue
+            resp = requests.request(...)
+            if resp.status_code in RETRYABLE and attempt < HTTP_RETRIES:
+                time.sleep(HTTP_RETRY_BACKOFF[attempt])  # 1, 2, 4 秒
+                continue              # 服务器忙 → 等一会再试
+            # 400 等 4xx 错误 → 直接报错并记录响应内容（不重试）
+            if 400 <= resp.status_code < 500:
+                logger.error(f"{resp.status_code}: {resp.text[:500]}")
             resp.raise_for_status()
             return resp
         except requests.RequestException as e:
-            if attempt < HTTP_RETRIES:
+            is_retryable = (
+                isinstance(e, HTTPError) and e.response.status_code in RETRYABLE
+            ) or not isinstance(e, HTTPError)  # 连接错误可重试
+            if is_retryable and attempt < HTTP_RETRIES:
                 time.sleep(delay)
             else:
-                raise       # 重试耗尽，抛出异常
+                raise       # 4xx 不重试，直接抛出
 ```
 
 **新知**: `**kwargs` — 接受任意关键字参数
