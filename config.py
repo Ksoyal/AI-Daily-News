@@ -50,7 +50,7 @@ AI_BASE_URL = os.getenv("AI_BASE_URL", "https://generativelanguage.googleapis.co
 AI_API_KEY = os.getenv("AI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
 AI_MODEL = os.getenv("AI_MODEL", "gemini-3-flash-preview")
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.5"))
-AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
+AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "120"))
 AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "8192"))
 AI_MAX_INPUT_CHARS = int(os.getenv("AI_MAX_INPUT_CHARS", "32000"))
 # Per-source floor: when truncating for token budget, try to keep at least
