@@ -230,6 +230,7 @@ def push_to_notion(report):
         return {"url": existing_url, "skipped": True}
 
     blocks = _md_to_notion_blocks(report["content"])
+    logger.info(f"Generated {len(blocks)} Notion blocks from {len(report['content'])} chars of Markdown")
 
     # Build page properties dynamically
     properties = {
