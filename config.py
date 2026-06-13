@@ -5,6 +5,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _env(name, default=None):
+    """Return a stripped environment value, treating empty strings as unset."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    value = value.strip()
+    return value if value else default
+
+
 # Project root (where config.py lives)
 PROJECT_DIR = Path(__file__).resolve().parent
 
@@ -33,10 +43,11 @@ RSS_SOURCES = [
 
 EXCLUDE_KEYWORDS = ["娱乐", "明星", "八卦", "体育"]
 
-MAX_ENTRIES = int(os.getenv("MAX_ENTRIES", "100"))
+MAX_ENTRIES = int(_env("MAX_ENTRIES", "100"))
+RSS_SUMMARY_MAX_CHARS = int(_env("RSS_SUMMARY_MAX_CHARS", "600"))
 
-FETCH_TIMEOUT = int(os.getenv("FETCH_TIMEOUT", "30"))
-FETCH_USER_AGENT = os.getenv(
+FETCH_TIMEOUT = int(_env("FETCH_TIMEOUT", "30"))
+FETCH_USER_AGENT = _env(
     "FETCH_USER_AGENT",
     "Mozilla/5.0 (compatible; AI-Daily-News/1.0; +https://github.com/Ksoyal/AI-Daily-News)"
 )
@@ -46,13 +57,13 @@ FETCH_USER_AGENT = os.getenv(
 # Google AI Studio (OpenAI-compatible endpoint)
 # Get key at https://aistudio.google.com/apikey
 # OpenRouter: base_url="https://openrouter.ai/api/v1", model="provider/model"
-AI_BASE_URL = os.getenv("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
-AI_API_KEY = os.getenv("AI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
-AI_MODEL = os.getenv("AI_MODEL", "gemini-3.5-flash")
-AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.5"))
-AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "180"))
-AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "16384"))
-AI_MAX_INPUT_CHARS = int(os.getenv("AI_MAX_INPUT_CHARS", "32000"))
+AI_BASE_URL = _env("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+AI_API_KEY = _env("AI_API_KEY") or _env("GEMINI_API_KEY") or _env("OPENROUTER_API_KEY", "")
+AI_MODEL = _env("AI_MODEL", "gemini-3.5-flash")
+AI_TEMPERATURE = float(_env("AI_TEMPERATURE", "0.5"))
+AI_TIMEOUT = int(_env("AI_TIMEOUT", "180"))
+AI_MAX_TOKENS = int(_env("AI_MAX_TOKENS", "16384"))
+AI_MAX_INPUT_CHARS = int(_env("AI_MAX_INPUT_CHARS", "32000"))
 # Per-source floor: when truncating for token budget, try to keep at least
 # this many entries from each source that has entries.
 AI_MIN_PER_SOURCE = 2
@@ -62,12 +73,12 @@ AI_MIN_PER_SOURCE = 2
 def _load_prompt():
     """Load the system prompt with env-var override support."""
     # 1. Inline env var wins
-    inline = os.getenv("AI_SYSTEM_PROMPT")
+    inline = _env("AI_SYSTEM_PROMPT")
     if inline:
         return inline
 
     # 2. Custom file path
-    file_path = os.getenv("AI_PROMPT_FILE")
+    file_path = _env("AI_PROMPT_FILE")
     if file_path and Path(file_path).exists():
         return Path(file_path).read_text(encoding="utf-8")
 
@@ -101,9 +112,11 @@ AI_SYSTEM_PROMPT = _load_prompt()
 NOTION_VERSION = "2022-06-28"
 
 # ── HTTP ─────────────────────────────────────────
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "30"))
-HTTP_RETRIES = 3
+HTTP_TIMEOUT = int(_env("HTTP_TIMEOUT", "30"))
+HTTP_RETRIES = int(_env("HTTP_RETRIES", "3"))
 HTTP_RETRY_BACKOFF = (1, 2, 4)  # seconds for retries 1/2/3
+NOTION_MAX_CHILDREN_PER_REQUEST = int(_env("NOTION_MAX_CHILDREN_PER_REQUEST", "100"))
+NOTION_RICH_TEXT_CHUNK_SIZE = int(_env("NOTION_RICH_TEXT_CHUNK_SIZE", "2000"))
 
 # ── Push notification ───────────────────────────
-NOTIFY_TIMEOUT = int(os.getenv("NOTIFY_TIMEOUT", "10"))
+NOTIFY_TIMEOUT = int(_env("NOTIFY_TIMEOUT", "10"))

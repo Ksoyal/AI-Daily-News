@@ -10,6 +10,18 @@ from config import (AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_TEMPERATURE, AI_TIMEOU
 logger = logging.getLogger(__name__)
 
 
+def _format_news_item(index, entry, include_summary=True):
+    lines = [
+        f"[{index}] 标题：{entry['title']}",
+        f"链接：{entry['link']}",
+        f"来源：{entry['source']}",
+    ]
+    summary = (entry.get("summary") or "").strip()
+    if include_summary and summary:
+        lines.append(f"摘要：{summary}")
+    return "\n".join(lines) + "\n\n"
+
+
 def _build_news_text(news_list):
     """Build the news text for the LLM prompt, respecting the token budget.
 
@@ -38,17 +50,34 @@ def _build_news_text(news_list):
             if idx >= len(src_entries):
                 continue
             entry = src_entries[idx]
-            line = f"[{len(selected) + 1}] 标题：{entry['title']}\n链接：{entry['link']}\n来源：{entry['source']}\n\n"
+            line = _format_news_item(len(selected) + 1, entry)
             if budget - len(line) < 0:
                 # Check if this source still hasn't met the floor
                 if idx < AI_MIN_PER_SOURCE and idx < len(src_entries):
-                    # Truncate the title to fit
-                    max_title_len = budget - len(f"[{len(selected) + 1}] 标题：\n链接：{entry['link']}\n来源：{entry['source']}\n\n")
-                    if max_title_len > 10:
-                        truncated_title = entry['title'][:max_title_len] + "..."
-                        line = f"[{len(selected) + 1}] 标题：{truncated_title}\n链接：{entry['link']}\n来源：{entry['source']}\n\n"
-                        selected.append(line)
-                        budget -= len(line)
+                    line_without_summary = _format_news_item(len(selected) + 1, entry, include_summary=False)
+                    if budget - len(line_without_summary) >= 0:
+                        selected.append(line_without_summary)
+                        budget -= len(line_without_summary)
+                    else:
+                        # Truncate the title to fit.
+                        base_len = len(
+                            f"[{len(selected) + 1}] 标题：\n"
+                            f"链接：{entry['link']}\n"
+                            f"来源：{entry['source']}\n\n"
+                        )
+                        max_title_len = budget - base_len - 3
+                        if max_title_len > 10:
+                            truncated_title = entry['title'][:max_title_len] + "..."
+                            line = (
+                                f"[{len(selected) + 1}] 标题：{truncated_title}\n"
+                                f"链接：{entry['link']}\n"
+                                f"来源：{entry['source']}\n\n"
+                            )
+                            selected.append(line)
+                            budget -= len(line)
+                    if budget < 0:
+                        logger.warning("AI input budget exceeded while preserving per-source floor")
+                        budget = 0
                     indices[src] = idx + 1
                     added = True
                 continue
@@ -65,12 +94,42 @@ def _build_news_text(news_list):
     return news_text
 
 
+def _parse_report(raw):
+    """Parse the structured LLM output into headline, tags, and markdown body."""
+    raw = (raw or "").strip()
+    if not raw:
+        raise RuntimeError("AI model returned an empty report body")
+
+    headline_match = re.search(r'^HEADLINE:\s*(.+)$', raw, re.MULTILINE)
+    tags_match = re.search(r'^TAGS:\s*(.+)$', raw, re.MULTILINE)
+
+    headline = headline_match.group(1).strip() if headline_match else "AI 晨报"
+    tags_raw = tags_match.group(1).strip() if tags_match else ""
+    tags = [t.strip() for t in tags_raw.replace("，", ",").split(",") if t.strip()][:3]
+
+    body_match = re.search(r'^---\s*\n(.+)$', raw, re.MULTILINE | re.DOTALL)
+    content = body_match.group(1).strip() if body_match else raw
+    if not content or content == raw and re.fullmatch(
+        r"(?s)\s*HEADLINE:\s*.+\nTAGS:\s*.*\n---\s*", raw
+    ):
+        raise RuntimeError("AI model returned an empty report body")
+
+    return {
+        "headline": headline,
+        "tags": tags,
+        "content": content,
+    }
+
+
 def generate_report(news_list):
     """Send news list to LLM and return structured daily report.
 
     Returns:
         dict with keys: headline (str), tags (list[str]), content (str — markdown body)
     """
+    if not AI_API_KEY:
+        raise ValueError("AI_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY must be set")
+
     client = OpenAI(
         base_url=AI_BASE_URL,
         api_key=AI_API_KEY,
@@ -110,7 +169,7 @@ def generate_report(news_list):
                 f"content_length={len(raw) if raw else 0}, "
                 f"usage={resp.usage}")
 
-    if raw is None:
+    if raw is None or not raw.strip():
         logger.error(f"Empty AI response. finish_reason={finish_reason}, "
                      f"message={choice.message}")
         raise RuntimeError(
@@ -118,25 +177,10 @@ def generate_report(news_list):
             "The model may be overloaded — try switching to a different model."
         )
 
-    # Parse structured output: HEADLINE, TAGS, ---, then body
-    headline_match = re.search(r'^HEADLINE:\s*(.+)$', raw, re.MULTILINE)
-    tags_match = re.search(r'^TAGS:\s*(.+)$', raw, re.MULTILINE)
+    report = _parse_report(raw)
+    logger.info(f"Parsed: headline='{report['headline'][:40]}...', tags={report['tags']}")
 
-    headline = headline_match.group(1).strip() if headline_match else "AI 晨报"
-    tags_raw = tags_match.group(1).strip() if tags_match else ""
-    tags = [t.strip() for t in tags_raw.replace("，", ",").split(",") if t.strip()][:3]
-
-    # Extract body after --- separator
-    body_match = re.search(r'^---\s*\n(.+)$', raw, re.MULTILINE | re.DOTALL)
-    content = body_match.group(1).strip() if body_match else raw
-
-    logger.info(f"Parsed: headline='{headline[:40]}...', tags={tags}")
-
-    return {
-        "headline": headline,
-        "tags": tags,
-        "content": content,
-    }
+    return report
 
 
 if __name__ == "__main__":

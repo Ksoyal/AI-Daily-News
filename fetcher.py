@@ -1,10 +1,15 @@
 import logging
+import html
+import re
 import sys
 import feedparser
 import requests
 from datetime import datetime, timedelta, timezone
 
-from config import RSS_SOURCES, EXCLUDE_KEYWORDS, MAX_ENTRIES, FETCH_TIMEOUT, FETCH_USER_AGENT
+from config import (
+    RSS_SOURCES, EXCLUDE_KEYWORDS, MAX_ENTRIES, FETCH_TIMEOUT,
+    FETCH_USER_AGENT, RSS_SUMMARY_MAX_CHARS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +21,45 @@ def _parse_published(entry):
         if struct:
             return datetime(*struct[:6], tzinfo=timezone.utc)
     return None
+
+
+def _clean_text(value):
+    """Convert RSS HTML fragments to compact plain text."""
+    if not value:
+        return ""
+    text = html.unescape(str(value))
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > RSS_SUMMARY_MAX_CHARS:
+        return text[:RSS_SUMMARY_MAX_CHARS].rstrip() + "..."
+    return text
+
+
+def _entry_summary(entry):
+    """Extract a plain-text summary from common RSS/Atom fields."""
+    for key in ("summary", "description", "subtitle"):
+        cleaned = _clean_text(entry.get(key))
+        if cleaned:
+            return cleaned
+
+    summary_detail = entry.get("summary_detail")
+    if isinstance(summary_detail, dict):
+        cleaned = _clean_text(summary_detail.get("value"))
+        if cleaned:
+            return cleaned
+
+    content_items = entry.get("content") or []
+    for item in content_items:
+        value = item.get("value") if isinstance(item, dict) else getattr(item, "value", "")
+        cleaned = _clean_text(value)
+        if cleaned:
+            return cleaned
+
+    return ""
+
+
+def _feed_has_entries(feed):
+    return bool(getattr(feed, "entries", None))
 
 
 def fetch_news():
@@ -37,7 +81,11 @@ def fetch_news():
                 resp = requests.get(url, timeout=FETCH_TIMEOUT,
                                     headers={"User-Agent": FETCH_USER_AGENT})
                 resp.raise_for_status()
-                feed = feedparser.parse(resp.content)
+                parsed_feed = feedparser.parse(resp.content)
+                if not _feed_has_entries(parsed_feed):
+                    last_error = ValueError("feed parsed but contained no entries")
+                    continue
+                feed = parsed_feed
                 if url != urls[0]:
                     logger.info(f"{src['name']}: fell back to {url}")
                 break
@@ -65,6 +113,7 @@ def fetch_news():
                 "link": entry.get("link", ""),
                 "source": src["name"],
                 "published": published.isoformat(),
+                "summary": _entry_summary(entry),
             })
             source_count += 1
 

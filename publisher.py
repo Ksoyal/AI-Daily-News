@@ -7,11 +7,23 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
-from config import NOTION_VERSION, HTTP_TIMEOUT, HTTP_RETRIES, HTTP_RETRY_BACKOFF
+from config import (
+    NOTION_VERSION, HTTP_TIMEOUT, HTTP_RETRIES, HTTP_RETRY_BACKOFF,
+    NOTION_MAX_CHILDREN_PER_REQUEST, NOTION_RICH_TEXT_CHUNK_SIZE,
+)
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+def _chunks(items, size):
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
+
+def _retry_delay(attempt):
+    return HTTP_RETRY_BACKOFF[min(attempt, len(HTTP_RETRY_BACKOFF) - 1)]
 
 
 def _retry_request(method, url, **kwargs):
@@ -23,7 +35,7 @@ def _retry_request(method, url, **kwargs):
             resp = requests.request(method, url, timeout=HTTP_TIMEOUT, **kwargs)
             # Retry only on transitory server errors (not 4xx — those are our fault)
             if resp.status_code in RETRYABLE and attempt < HTTP_RETRIES:
-                delay = HTTP_RETRY_BACKOFF[attempt]
+                delay = _retry_delay(attempt)
                 logger.warning(f"{method} {url} → {resp.status_code}, retrying in {delay}s (attempt {attempt + 1}/{HTTP_RETRIES})")
                 time.sleep(delay)
                 continue
@@ -40,7 +52,7 @@ def _retry_request(method, url, **kwargs):
                 and e.response.status_code in RETRYABLE
             ) or not isinstance(e, requests.HTTPError)  # Connection/timeout errors are retryable
             if is_retryable and attempt < HTTP_RETRIES:
-                delay = HTTP_RETRY_BACKOFF[attempt]
+                delay = _retry_delay(attempt)
                 logger.warning(f"{method} {url} → {e}, retrying in {delay}s (attempt {attempt + 1}/{HTTP_RETRIES})")
                 time.sleep(delay)
             else:
@@ -54,11 +66,12 @@ def _parse_rich_text(text):
     for i, part in enumerate(parts):
         if not part:
             continue
-        rich_text.append({
-            "type": "text",
-            "text": {"content": part},
-            "annotations": {"bold": (i % 2 == 1)},
-        })
+        for chunk in _chunks(part, NOTION_RICH_TEXT_CHUNK_SIZE):
+            rich_text.append({
+                "type": "text",
+                "text": {"content": chunk},
+                "annotations": {"bold": (i % 2 == 1)},
+            })
     return rich_text
 
 
@@ -204,6 +217,24 @@ def _find_today_page(token, database_id, date_col, today):
     return None
 
 
+def _notion_headers(token):
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_VERSION,
+    }
+
+
+def _append_blocks_to_page(token, page_id, blocks):
+    """Append blocks in Notion-sized batches after page creation."""
+    if not blocks:
+        return
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+    headers = _notion_headers(token)
+    for batch in _chunks(blocks, NOTION_MAX_CHILDREN_PER_REQUEST):
+        _retry_request("PATCH", url, headers=headers, json={"children": batch})
+
+
 def push_to_notion(report):
     """Create a new page in the Notion database with the daily report.
 
@@ -220,6 +251,11 @@ def push_to_notion(report):
     if not token or not database_id:
         raise ValueError("NOTION_TOKEN and NOTION_DATABASE_ID must be set in .env")
 
+    blocks = _md_to_notion_blocks(report["content"])
+    if not blocks:
+        raise ValueError("report content produced no Notion blocks")
+    logger.info(f"Generated {len(blocks)} Notion blocks from {len(report['content'])} chars of Markdown")
+
     today = datetime.now().strftime("%Y-%m-%d")
     title_col, date_col, tags_col = _get_database_properties(token, database_id)
 
@@ -228,9 +264,6 @@ def push_to_notion(report):
     if existing_url:
         logger.info(f"Today's page already exists: {existing_url} — skipping")
         return {"url": existing_url, "skipped": True}
-
-    blocks = _md_to_notion_blocks(report["content"])
-    logger.info(f"Generated {len(blocks)} Notion blocks from {len(report['content'])} chars of Markdown")
 
     # Build page properties dynamically
     properties = {
@@ -252,19 +285,22 @@ def push_to_notion(report):
         logger.info("No multi_select property found in database — skipping 核心话题")
 
     url = "https://api.notion.com/v1/pages"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Notion-Version": NOTION_VERSION,
-    }
+    headers = _notion_headers(token)
+    initial_blocks = blocks[:NOTION_MAX_CHILDREN_PER_REQUEST]
+    remaining_blocks = blocks[NOTION_MAX_CHILDREN_PER_REQUEST:]
     body = {
         "parent": {"database_id": database_id},
         "properties": properties,
-        "children": blocks,
+        "children": initial_blocks,
     }
 
     resp = _retry_request("POST", url, headers=headers, json=body)
     page = resp.json()
+    if remaining_blocks:
+        page_id = page.get("id")
+        if not page_id:
+            raise RuntimeError("Notion page response did not include an id for appending blocks")
+        _append_blocks_to_page(token, page_id, remaining_blocks)
     logger.info(f"Notion page created: {page.get('url', page.get('id'))}")
     return page
 

@@ -2,7 +2,7 @@
 
 ## 项目
 
-AI 资讯聚合管线：RSS 抓取 → OpenRouter AI 摘要 → Notion 数据库发布 → Server酱手机推送。每日 8:00 自动运行。
+AI 资讯聚合管线：RSS 抓取 → OpenAI 兼容 AI 摘要 → Notion 数据库发布 → Server酱手机推送。每日 8:00 自动运行。
 
 ## 架构
 
@@ -16,13 +16,13 @@ RSS feeds (9 sources)
 fetcher.py          ── 30s 超时抓取、User-Agent 伪装、Fallback URL、单源异常隔离、
     │                   24h 过滤、关键词黑名单、100条截断
     ▼
-summarizer.py       ── OpenRouter API (moonshotai/kimi-k2.6:free, OpenAI 兼容端点, 60s timeout)
-    │                   Token 预算控制（32K chars, 按源轮询截断）
+summarizer.py       ── OpenAI 兼容 API（默认 Google AI Studio / gemini-3.5-flash, 180s timeout）
+    │                   Token 预算控制（32K chars, 按源轮询截断，包含 RSS 摘要）
     │                   返回 {headline, tags, content}
     ▼
 publisher.py        ── Markdown→Notion Blocks（H2/H3/Quote/Divider/Bullet），动态发现数据库列
     │                   幂等性检查（同日已有页面则跳过）
-    │                   3次指数退避重试（429/5xx）
+    │                   3次指数退避重试（429/5xx），超长 rich_text/blocks 分批写入
     ▼
 main.py             ── 串联 + Server酱推送通知（10s timeout）
 
@@ -33,7 +33,7 @@ trigger.py          ── 外部精准触发器（repository_dispatch API）
 
 ### `config.py` — 集中配置
 - `RSS_SOURCES`: 9 个源，每个支持 `urls` 列表（fallback 机制）
-- `EXCLUDE_KEYWORDS`, `MAX_ENTRIES`, `FETCH_TIMEOUT`, `FETCH_USER_AGENT` — RSS 参数
+- `EXCLUDE_KEYWORDS`, `MAX_ENTRIES`, `RSS_SUMMARY_MAX_CHARS`, `FETCH_TIMEOUT`, `FETCH_USER_AGENT` — RSS 参数
 - `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`, `AI_TEMPERATURE`, `AI_TIMEOUT`, `AI_MAX_TOKENS` — AI 参数
 - `AI_MAX_INPUT_CHARS`, `AI_MIN_PER_SOURCE` — Token 预算控制
 - `AI_SYSTEM_PROMPT` — 按优先级加载：`AI_SYSTEM_PROMPT` 环境变量 > `AI_PROMPT_FILE` 路径 > `prompt.txt` > 内置 fallback
@@ -43,17 +43,20 @@ trigger.py          ── 外部精准触发器（repository_dispatch API）
 ### `fetcher.py` — RSS 抓取
 - `RSS_SOURCES`: 9 个源（纽约时报中文/36氪/BBC中文/FT中文网/量子位/德国之声中文/日经中文网/爱范儿/端传媒）
 - 用 `requests.get(url, timeout=30)` 先拉 XML 再 `feedparser.parse(string)`
-- Fallback URL：每个源配置 `urls` 列表，逐个尝试直到成功，RSSHub 做镜像中转
+- Fallback URL：每个源配置 `urls` 列表，逐个尝试直到解析到 entries；RSSHub 做镜像中转
 - 带 `User-Agent` 头伪装浏览器，避免 403 拦截
 - 每个源独立 try/except，失败只打 warning 不阻断其他源
 - `_parse_published()`: 从 `published_parsed` 或 `updated_parsed` 提取 UTC 时间
-- `fetch_news()` → `list[dict]`，每条含 `title/link/source/published`
+- `_entry_summary()`: 从 `summary/description/content` 提取纯文本摘要，清理 HTML 并按预算截断
+- `fetch_news()` → `list[dict]`，每条含 `title/link/source/published/summary`
 - 过滤: 24h 窗口 → 黑名单关键词（娱乐/明星/八卦/体育）→ 取最新 100 条
 
 ### `summarizer.py` — AI 摘要
 - `generate_report(news_list)` → `dict{headline, tags, content}`
-- 模型: `moonshotai/kimi-k2.6:free` (OpenRouter)，OpenAI 兼容接口，temperature=0.5
+- 模型: 默认 `gemini-3.5-flash` (Google AI Studio OpenAI-compatible endpoint)，可通过 `AI_BASE_URL` + `AI_MODEL` + API key 切换到 OpenRouter 等提供商，temperature=0.5
 - `_build_news_text()`: 按源轮询选取条目，32K chars 字符预算，每源保底2条
+- 输入包含 RSS 摘要，减少模型只凭标题补细节的风险
+- `_parse_report()`: 解析 `HEADLINE` / `TAGS` / body，支持中英文逗号分隔标签
 - Prompt 外部化在 `prompt.txt`，编辑器风格（见 Prompt 模块）
 - AI API 429 限流自动重试 3 次（8s/16s/32s 退避），免费模型过载不立即崩溃
 - 防范: content 为 None 时抛出 RuntimeError
@@ -71,6 +74,8 @@ trigger.py          ── 外部精准触发器（repository_dispatch API）
 - `_find_today_page()`: 查询数据库是否已有当日页面，有则跳过创建（幂等性）
 - `_get_database_properties()`: 查询 schema，自动发现 title/date/multi_select 列
 - `_md_to_notion_blocks()`: Markdown→Notion Blocks — `##` → H2, `###` → H3, `-`/`▪`/`▸` → Bullet, `>` → Quote, `---`/装饰线 → Divider, `❶-❿` → Numbered List, `**bold**` → annotations
+- `_parse_rich_text()`: 自动按 Notion rich_text 文本长度限制拆分长文本，并保留粗体标记
+- 页面创建时最多携带 100 个 children blocks，剩余 blocks 通过 append children API 分批追加
 - 如果数据库缺少 date 或 multi_select 列，仅打日志跳过，不报错
 
 ### `main.py` — 入口
@@ -84,9 +89,10 @@ trigger.py          ── 外部精准触发器（repository_dispatch API）
 - 配合 Windows 任务计划程序或在线 cron 服务可 8:00 准时执行
 
 ### `.github/workflows/`
-- `daily_run.yml` — 主流水线：schedule (兜底) + workflow_dispatch + repository_dispatch
-- `precise_trigger.yml` — 守门员：每 15 分钟检查时间，UTC 0:00-0:15 触发主流水线，确保 8:00 BJT 准点
-- Secrets: `OPENROUTER_API_KEY`, `WORKFLOW_PAT`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `PUSH_KEY`
+- `daily_run.yml` — 主流水线：schedule (兜底) + workflow_dispatch + repository_dispatch；发布前先跑单元测试
+- `precise_trigger.yml` — 守门员：每 15 分钟检查时间，UTC 0:00-0:15 触发主流水线；dispatch 失败会让 workflow 失败
+- `tests.yml` — push / pull_request 自动运行单元测试
+- Secrets: `AI_API_KEY` 或 `GEMINI_API_KEY` 或 `OPENROUTER_API_KEY`, `WORKFLOW_PAT`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `PUSH_KEY`；可选 `AI_BASE_URL`, `AI_MODEL`
 
 ## 运行
 
@@ -111,9 +117,10 @@ python -m pytest tests/test_fetcher.py -v
 ## 测试
 
 `tests/` 目录，pytest 框架，无需网络：
-- `test_fetcher.py` — `_parse_published()` 时间解析（4 cases）
-- `test_summarizer.py` — `_build_news_text()` token 预算控制（4 cases）
-- `test_publisher.py` — `_parse_rich_text()` 粗体解析（3 cases）+ `_md_to_notion_blocks()` 块转换（6 cases）
+- `test_config.py` — 空环境变量不覆盖默认配置
+- `test_fetcher.py` — `_parse_published()` 时间解析、RSS 摘要清洗、无 entries 时 fallback
+- `test_summarizer.py` — `_build_news_text()` token 预算控制、摘要入模、AI 输出解析
+- `test_publisher.py` — `_parse_rich_text()` 粗体/长文本分片、`_md_to_notion_blocks()` 块转换、超过 100 blocks 后续追加
 
 ## 依赖
 
@@ -131,35 +138,38 @@ python -m pytest tests/test_fetcher.py -v
 | 变量 | 用途 |
 |------|------|
 | `OPENROUTER_API_KEY` | OpenRouter API 密钥 |
-| `GEMINI_API_KEY` | Google AI Studio API 密钥（fallback） |
+| `GEMINI_API_KEY` | Google AI Studio API 密钥 |
 | `AI_API_KEY` | 通用 AI API 密钥（优先级最高） |
 | `NOTION_TOKEN` | Notion Integration Token |
 | `NOTION_DATABASE_ID` | 目标数据库 ID (32位 hex) |
 | `PUSH_KEY` | Server酱 SendKey (可选) |
 | `MAX_ENTRIES` | 最大抓取条数 (默认 100) |
+| `RSS_SUMMARY_MAX_CHARS` | 每条 RSS 摘要最大字符数 (默认 600) |
 | `FETCH_TIMEOUT` | RSS 抓取超时秒数 (默认 30) |
-| `AI_MODEL` | 模型名 (默认 moonshotai/kimi-k2.6:free) |
-| `AI_BASE_URL` | AI API 端点 (默认 OpenRouter) |
+| `AI_MODEL` | 模型名 (默认 gemini-3.5-flash) |
+| `AI_BASE_URL` | AI API 端点 (默认 Google AI Studio OpenAI-compatible endpoint) |
 | `AI_TEMPERATURE` | 模型温度 (默认 0.5) |
-| `AI_TIMEOUT` | AI 请求超时秒数 (默认 60) |
-| `AI_MAX_TOKENS` | AI 最大输出 token (默认 8192) |
+| `AI_TIMEOUT` | AI 请求超时秒数 (默认 180) |
+| `AI_MAX_TOKENS` | AI 最大输出 token (默认 16384) |
 | `AI_MAX_INPUT_CHARS` | AI 输入字符预算 (默认 32000) |
 | `AI_SYSTEM_PROMPT` | 直接覆盖系统 Prompt |
 | `AI_PROMPT_FILE` | 自定义 Prompt 文件路径 |
 | `HTTP_TIMEOUT` | Notion API 超时秒数 (默认 30) |
+| `HTTP_RETRIES` | Notion API 重试次数 (默认 3) |
 
 ## 设计决策
 
-- **Kimi K2.6 + OpenRouter**: 免费模型中文编辑能力最强，观点犀利、表达生动
-- **OpenAI 兼容端点**: 统一 SDK，换 `base_url` + `api_key` 即可切换模型，零摩擦迁移
+- **OpenAI 兼容端点**: 统一 SDK，默认 Google AI Studio，也可通过 `base_url` + `model` + API key 切换 OpenRouter 等提供商
 - **Notion 而非数据库**: 天然支持富文本/Markdown，零运维，移动端直接阅读
 - **feedparser 而非 Scrapy**: RSS 聚合不需要爬虫框架，feedparser 轻量且够用
 - **Server酱而非 PushPlus**: 简单 HTTP POST，无需 SDK
 - **动态列名**: publisher 不硬编码列名，运行时从 schema 自动发现 title/date/multi_select
 - **单源异常隔离**: 某个 RSS 源不可达不影响其他源，每个源独立 try/except
 - **Fallback URL**: 纽约时报/日经等源在 GA 跑可能被 CDN 封 IP，RSSHub 做镜像 fallback
+- **RSS 摘要入模**: 不只把标题交给模型，减少凭标题扩写导致的幻觉
 - **幂等发布**: 创建 Notion 页面前查询当日是否已有记录，防止重复
 - **指数退避重试**: Notion API 返回 429/5xx 时自动重试，间隔 1s/2s/4s
+- **Notion 分批写入**: 规避 children blocks 和 rich_text 长度限制
 - **Token 预算控制**: 按源轮询截断新闻列表，每源保底2条，避免单一来源占满上下文
 - **Precise Trigger**: GitHub 自带 cron 不准，15分钟守门员 workflow 准点触发主流水线
 - **配置外部化**: 所有可调参数集中在 config.py，支持环境变量覆盖，Prompt 可独立替换
