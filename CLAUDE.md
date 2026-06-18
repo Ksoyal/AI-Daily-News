@@ -89,7 +89,7 @@ trigger.py          ── 外部精准触发器（repository_dispatch API）
 - 配合 Windows 任务计划程序或在线 cron 服务可 8:00 准时执行
 
 ### `.github/workflows/`
-- `daily_run.yml` — 主流水线：schedule (兜底) + workflow_dispatch + repository_dispatch；发布前先跑单元测试
+- `daily_run.yml` — 主流水线：schedule (兜底) + workflow_dispatch + repository_dispatch；自动触发会先检查香港日期内是否已有成功 run，避免重复执行；发布前先跑单元测试
 - `precise_trigger.yml` — 守门员：每 15 分钟检查时间，UTC 0:00-0:15 触发主流水线；dispatch 失败会让 workflow 失败
 - `tests.yml` — push / pull_request 自动运行单元测试
 - Secrets: `AI_API_KEY` 或 `GEMINI_API_KEY` 或 `OPENROUTER_API_KEY`, `WORKFLOW_PAT`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `PUSH_KEY`；可选 `AI_BASE_URL`, `AI_MODEL`
@@ -171,6 +171,6 @@ python -m pytest tests/test_fetcher.py -v
 - **指数退避重试**: Notion API 返回 429/5xx 时自动重试，间隔 1s/2s/4s
 - **Notion 分批写入**: 规避 children blocks 和 rich_text 长度限制
 - **Token 预算控制**: 按源轮询截断新闻列表，每源保底2条，避免单一来源占满上下文
-- **Precise Trigger**: GitHub 自带 cron 不准，15分钟守门员 workflow 准点触发主流水线
+- **Precise Trigger**: GitHub 自带 cron 不准，15分钟守门员 workflow 准点触发主流水线；主流水线用当天成功记录做幂等检查，防止精准触发和兜底 schedule 双跑
 - **配置外部化**: 所有可调参数集中在 config.py，支持环境变量覆盖，Prompt 可独立替换
 - **User-Agent 伪装**: 部分 RSS 源封默认 UA，配置独立的 User-Agent 头
