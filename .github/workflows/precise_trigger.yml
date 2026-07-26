@@ -1,6 +1,7 @@
 name: Precise Trigger
 
-# 每 15 分钟检查一次，北京时间 8:00 准点触发主流水线
+# 每 15 分钟检查一次，UTC 00 时（北京 8:00-8:59）窗口内触发主流水线；
+# 重复 dispatch 由主流水线的 concurrency 组 + 守卫去重
 on:
   schedule:
     - cron: "*/15 * * * *"
@@ -10,13 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Check if it's 00:00 UTC (Beijing 08:00)
+      - name: Check if within UTC 00 hour (Beijing 08:00-08:59)
         id: check
         run: |
           HOUR=$(date -u +%H)
           MINUTE=$(date -u +%M)
           echo "UTC time: ${HOUR}:${MINUTE}"
-          if [ "$HOUR" = "00" ] && [ "$MINUTE" -lt "15" ]; then
+          # 整个 00 时窗口内都触发：GitHub cron 在 00:00 高峰期延迟常超 15 分钟，
+          # 窗口过窄会整天漏发；多余的 dispatch 由 daily_run 的 concurrency + 守卫去重
+          if [ "$HOUR" = "00" ]; then
             echo "fire=true" >> $GITHUB_OUTPUT
             echo "✅ Within trigger window, firing main workflow..."
           else
@@ -37,7 +40,7 @@ jobs:
           status=$(curl -sS -o /tmp/dispatch_response.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${WORKFLOW_PAT}" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/Ksoyal/AI-Daily-News/dispatches \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
             -d '{"event_type":"daily_trigger"}')
           if [ "${status}" != "204" ]; then
             echo "::error::Dispatch failed with HTTP ${status}"

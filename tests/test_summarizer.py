@@ -1,13 +1,61 @@
 import sys
 import os
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from summarizer import _build_news_text
+from summarizer import _build_news_text, _format_news_item
 import summarizer
 import config
+from config import REPORT_TZ
+
+FROZEN_NOW = datetime(2026, 7, 24, 9, 0, tzinfo=REPORT_TZ)
+
+
+class FakeDatetime(datetime):
+    """datetime subclass with a frozen now() for deterministic tests."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return FROZEN_NOW
+
+
+class FakeRateLimitError(summarizer.RateLimitError):
+    """RateLimitError without the httpx.Response ceremony."""
+
+    def __init__(self, message="rate limited"):
+        Exception.__init__(self, message)
+        self.message = message
+
+
+def _make_response(content, with_choice=True):
+    if with_choice:
+        choices = [SimpleNamespace(finish_reason="stop",
+                                   message=SimpleNamespace(content=content))]
+    else:
+        choices = []
+    return SimpleNamespace(choices=choices, model="fake-model", usage=None)
+
+
+def _fake_openai_factory(outcomes, calls):
+    """Build a fake OpenAI class whose create() pops outcomes (exception → raise)."""
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    return FakeOpenAI
 
 
 class TestBuildNewsText:
@@ -55,6 +103,243 @@ class TestBuildNewsText:
         text = _build_news_text(news)
 
         assert "摘要：这是用于减少幻觉的新闻上下文。" in text
+
+
+class TestBudgetTruncation:
+    def test_budget_strips_summaries_and_drops_overflow(self, monkeypatch):
+        monkeypatch.setattr(summarizer, "AI_MAX_INPUT_CHARS", 700)
+        monkeypatch.setattr(summarizer, "AI_MIN_PER_SOURCE", 2)
+        news = []
+        for src in ("源A", "源B"):
+            for i in range(3):
+                news.append({
+                    "title": f"{src}标题{i}" + "长" * 6,
+                    "link": f"http://x.com/{src}{i}",
+                    "source": src,
+                    "summary": "详" * 200,
+                })
+
+        text = _build_news_text(news)
+
+        assert len(text) <= 700
+        # 2 of 6 entries dropped, but every source keeps the per-source floor
+        assert text.count("标题：") == 4
+        assert text.count("来源：源A") == 2
+        assert text.count("来源：源B") == 2
+        assert "源A标题2" not in text
+        assert "源B标题2" not in text
+        # only the first entry per source keeps its summary; floor entries are stripped
+        assert text.count("摘要：") == 2
+
+    def test_floor_entry_title_truncated_with_ellipsis(self, monkeypatch):
+        monkeypatch.setattr(summarizer, "AI_MAX_INPUT_CHARS", 150)
+        monkeypatch.setattr(summarizer, "AI_MIN_PER_SOURCE", 2)
+        long_title = "深" * 200
+        news = [
+            {"title": "短标题", "link": "http://a.com", "source": "源1"},
+            {"title": long_title, "link": "http://b.com", "source": "源1"},
+        ]
+
+        text = _build_news_text(news)
+
+        assert len(text) <= 150
+        assert text.count("标题：") == 2
+        assert long_title not in text
+        assert "深" * 82 + "..." in text
+
+
+class TestGenerateReport:
+    VALID_OUTPUT = """HEADLINE: 测试标题
+TAGS: AI, 测试
+---
+## 今日要闻
+正文内容"""
+
+    SAMPLE_NEWS = [
+        {"title": "新闻A", "link": "http://a.com", "source": "源1"},
+        {"title": "新闻B", "link": "http://b.com", "source": "源2"},
+    ]
+
+    def _patch(self, monkeypatch, outcomes):
+        calls = []
+        sleeps = []
+        monkeypatch.setattr(summarizer, "AI_API_KEY", "dummy-key")
+        monkeypatch.setattr(summarizer, "OpenAI", _fake_openai_factory(outcomes, calls))
+        monkeypatch.setattr(summarizer.time, "sleep", lambda delay: sleeps.append(delay))
+        return calls, sleeps
+
+    def test_rate_limit_retries_then_succeeds(self, monkeypatch):
+        outcomes = [FakeRateLimitError(), FakeRateLimitError(),
+                    _make_response(self.VALID_OUTPUT)]
+        calls, sleeps = self._patch(monkeypatch, outcomes)
+
+        report = summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert report["headline"] == "测试标题"
+        assert report["tags"] == ["AI", "测试"]
+        assert report["content"] == "## 今日要闻\n正文内容"
+        assert len(calls) == 3
+        assert sleeps == [8, 16]
+
+    def test_rate_limit_retries_exhausted_propagates(self, monkeypatch):
+        outcomes = [FakeRateLimitError() for _ in range(4)]
+        calls, sleeps = self._patch(monkeypatch, outcomes)
+
+        with pytest.raises(summarizer.RateLimitError):
+            summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert len(calls) == 4
+        assert sleeps == [8, 16, 32]
+
+    def test_empty_choices_raises_runtime_error(self, monkeypatch):
+        outcomes = [_make_response(None, with_choice=False)]
+        calls, _ = self._patch(monkeypatch, outcomes)
+
+        with pytest.raises(RuntimeError, match="no choices"):
+            summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert len(calls) == 1
+
+    def test_none_content_raises_runtime_error(self, monkeypatch):
+        outcomes = [_make_response(None)]
+        calls, _ = self._patch(monkeypatch, outcomes)
+
+        with pytest.raises(RuntimeError, match="empty content"):
+            summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert len(calls) == 1
+
+    def test_empty_news_list_raises_without_api_call(self, monkeypatch):
+        def forbidden_client(**kwargs):
+            raise AssertionError("OpenAI client should not be constructed")
+
+        monkeypatch.setattr(summarizer, "AI_API_KEY", "dummy-key")
+        monkeypatch.setattr(summarizer, "OpenAI", forbidden_client)
+
+        with pytest.raises(ValueError, match="news_list is empty"):
+            summarizer.generate_report([])
+
+
+class TestNewsItemAge:
+    def _patch_now(self, monkeypatch):
+        monkeypatch.setattr(summarizer, "datetime", FakeDatetime)
+
+    def test_age_line_for_fresh_entry(self, monkeypatch):
+        self._patch_now(monkeypatch)
+        entry = {
+            "title": "新闻A",
+            "link": "http://a.com",
+            "source": "源1",
+            "published": (FROZEN_NOW - timedelta(hours=3)).isoformat(),
+        }
+
+        text = _format_news_item(1, entry)
+
+        assert "发布：约3小时前" in text
+        assert "链接：http://a.com" in text
+
+    def test_age_rounds_to_nearest_hour(self, monkeypatch):
+        self._patch_now(monkeypatch)
+        entry = {
+            "title": "新闻A",
+            "link": "http://a.com",
+            "source": "源1",
+            "published": (FROZEN_NOW - timedelta(hours=2, minutes=50)).isoformat(),
+        }
+
+        text = _format_news_item(1, entry)
+
+        assert "发布：约3小时前" in text
+
+    def test_age_renders_days_beyond_48_hours(self, monkeypatch):
+        self._patch_now(monkeypatch)
+        entry = {
+            "title": "新闻A",
+            "link": "http://a.com",
+            "source": "源1",
+            "published": (FROZEN_NOW - timedelta(days=3)).isoformat(),
+        }
+
+        text = _format_news_item(1, entry)
+
+        assert "发布：约3天前" in text
+
+    def test_age_line_absent_when_published_missing(self, monkeypatch):
+        self._patch_now(monkeypatch)
+        entry = {"title": "新闻A", "link": "http://a.com", "source": "源1"}
+
+        text = _format_news_item(1, entry)
+
+        assert "发布：" not in text
+        assert "链接：http://a.com" in text
+
+    def test_age_line_absent_when_published_unparseable(self, monkeypatch):
+        self._patch_now(monkeypatch)
+        entry = {
+            "title": "新闻A",
+            "link": "http://a.com",
+            "source": "源1",
+            "published": "not-a-date",
+        }
+
+        text = _format_news_item(1, entry)
+
+        assert "发布：" not in text
+
+
+class TestUserMessage:
+    SAMPLE_NEWS = [
+        {"title": "新闻A", "link": "http://a.com", "source": "源1"},
+        {"title": "新闻B", "link": "http://b.com", "source": "源2"},
+    ]
+
+    def _patch(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(summarizer, "AI_API_KEY", "dummy-key")
+        monkeypatch.setattr(summarizer, "OpenAI",
+                            _fake_openai_factory([_make_response(TestGenerateReport.VALID_OUTPUT)], calls))
+        monkeypatch.setattr(summarizer, "datetime", FakeDatetime)
+        return calls
+
+    def _user_content(self, calls):
+        return calls[0]["messages"][1]["content"]
+
+    def test_user_message_starts_with_date_line(self, monkeypatch):
+        calls = self._patch(monkeypatch)
+
+        summarizer.generate_report(self.SAMPLE_NEWS)
+
+        content = self._user_content(calls)
+        assert content.startswith("今天是 2026年7月24日（星期五）。")
+        assert "以下是最近的新闻列表（每条已标注发布时效），请生成日报：" in content
+        assert "新闻A" in content
+
+    def test_previous_context_block_inserted_before_news_list(self, monkeypatch):
+        calls = self._patch(monkeypatch)
+
+        summarizer.generate_report(self.SAMPLE_NEWS, previous_context="上期焦点：A公司发布新模型。")
+
+        content = self._user_content(calls)
+        assert "【上期日报概要】" in content
+        assert "上期焦点：A公司发布新模型。" in content
+        assert "（上期已覆盖且无新进展的事件请省略；有进展只写增量并注明与上期的差异。）" in content
+        assert content.index("【上期日报概要】") < content.index("以下是最近的新闻列表")
+
+    def test_previous_context_absent_by_default(self, monkeypatch):
+        calls = self._patch(monkeypatch)
+
+        summarizer.generate_report(self.SAMPLE_NEWS)
+
+        content = self._user_content(calls)
+        assert "【上期日报概要】" not in content
+
+    def test_previous_context_empty_string_ignored(self, monkeypatch):
+        calls = self._patch(monkeypatch)
+
+        summarizer.generate_report(self.SAMPLE_NEWS, previous_context="   ")
+
+        content = self._user_content(calls)
+        assert "【上期日报概要】" not in content
 
 
 class TestReportParsing:

@@ -12,10 +12,18 @@ permissions:
   contents: read
   actions: read
 
+# 同一时刻最多 1 个 run 执行 + 1 个 pending（更多的会被 GitHub 自动取消，
+# Actions 面板显示 Cancelled 属正常现象）；pending run 轮到执行时守卫能看到
+# 已完成的成功 run 并跳过，消除 dispatch 与兜底 schedule 的双跑竞态
+concurrency:
+  group: daily-run
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 覆盖最坏情况：AI 重试满 4 次 × 180s + 退避 ≈ 13 分钟，加抓取/安装/测试
+    timeout-minutes: 30
 
     steps:
       - name: Checkout

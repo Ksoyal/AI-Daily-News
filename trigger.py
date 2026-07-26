@@ -13,6 +13,7 @@ import os
 import sys
 import json
 import subprocess
+import urllib.error
 import urllib.request
 
 REPO = "Ksoyal/AI-Daily-News"
@@ -57,9 +58,14 @@ def trigger(token, dry_run=False):
             if resp.status in (204, 200):
                 print(f"[OK] Workflow triggered ({resp.status}) — 去看 Actions 面板")
                 return True
+            print(f"[FAIL] Unexpected HTTP {resp.status}")
+            return False
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
         print(f"[FAIL] HTTP {e.code}: {body}")
+        return False
+    except urllib.error.URLError as e:
+        print(f"[FAIL] 网络错误: {e.reason}")
         return False
 
 

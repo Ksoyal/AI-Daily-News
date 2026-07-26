@@ -5,16 +5,26 @@ import sys
 import time
 import requests
 from datetime import datetime
-from dotenv import load_dotenv
 
 from config import (
     NOTION_VERSION, HTTP_TIMEOUT, HTTP_RETRIES, HTTP_RETRY_BACKOFF,
-    NOTION_MAX_CHILDREN_PER_REQUEST, NOTION_RICH_TEXT_CHUNK_SIZE,
+    NOTION_MAX_CHILDREN_PER_REQUEST, NOTION_RICH_TEXT_CHUNK_SIZE, REPORT_TZ,
 )
 
-load_dotenv()
-
 logger = logging.getLogger(__name__)
+
+
+def _today():
+    """The pipeline's 'today' (report timezone), as YYYY-MM-DD."""
+    return datetime.now(REPORT_TZ).strftime("%Y-%m-%d")
+
+
+def _notion_headers(token):
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_VERSION,
+    }
 
 
 def _chunks(items, size):
@@ -28,7 +38,7 @@ def _retry_delay(attempt):
 
 def _retry_request(method, url, **kwargs):
     """Wrapper around requests.request with retry on transitory errors only."""
-    RETRYABLE = (429, 502, 503, 504)
+    RETRYABLE = (429, 500, 502, 503, 504)
     last_exc = None
     for attempt in range(HTTP_RETRIES + 1):
         try:
@@ -59,8 +69,18 @@ def _retry_request(method, url, **kwargs):
                 raise last_exc
 
 
-def _parse_rich_text(text):
-    """Parse `**bold**` markers into Notion rich_text annotations array."""
+# Markdown link: [text](url), http(s) targets only — anything else stays
+# literal. The URL part tolerates one level of parentheses (Wikipedia-style
+# .../AI_(disambiguation) links would otherwise be truncated at the paren).
+_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)\)")
+
+# **[text](url)** — models occasionally bold a whole citation; the stray **
+# can't pair up after link extraction, so strip it beforehand.
+_BOLD_WRAPPED_LINK_RE = re.compile(r"\*\*(" + _LINK_RE.pattern + r")\*\*")
+
+
+def _parse_bold_text(text):
+    """Parse `**bold**` markers into Notion rich_text annotation elements."""
     parts = re.split(r"\*\*(.*?)\*\*", text)
     rich_text = []
     for i, part in enumerate(parts):
@@ -71,6 +91,31 @@ def _parse_rich_text(text):
                 "type": "text",
                 "text": {"content": chunk},
                 "annotations": {"bold": (i % 2 == 1)},
+            })
+    return rich_text
+
+
+def _parse_rich_text(text):
+    """Parse `[text](url)` links and `**bold**` markers into Notion rich_text.
+
+    Link texts are short so they are not chunked; non-link segments keep the
+    existing bold parsing and chunking.
+    """
+    text = _BOLD_WRAPPED_LINK_RE.sub(r"\1", text)
+    rich_text = []
+    parts = _LINK_RE.split(text)
+    # re.split with 2 capture groups yields [plain, link_text, link_url, plain, ...]
+    for i in range(0, len(parts), 3):
+        if parts[i]:
+            rich_text.extend(_parse_bold_text(parts[i]))
+        if i + 2 < len(parts):
+            rich_text.append({
+                "type": "text",
+                "text": {
+                    "content": parts[i + 1].replace("**", ""),
+                    "link": {"url": parts[i + 2]},
+                },
+                "annotations": {"bold": False},
             })
     return rich_text
 
@@ -92,22 +137,22 @@ def _md_to_notion_blocks(md_text):
             blocks.append({"type": "divider", "divider": {}})
             continue
 
-        # Heading 2
+        # Heading 2 — strip stray ** markers (headings are plain text, no annotations)
         if stripped.startswith("## "):
             blocks.append({
                 "type": "heading_2",
                 "heading_2": {
-                    "rich_text": [{"type": "text", "text": {"content": stripped[3:]}}]
+                    "rich_text": [{"type": "text", "text": {"content": stripped[3:].replace("**", "")}}]
                 },
             })
             continue
 
-        # Heading 3
+        # Heading 3 — strip stray ** markers (headings are plain text, no annotations)
         if stripped.startswith("### "):
             blocks.append({
                 "type": "heading_3",
                 "heading_3": {
-                    "rich_text": [{"type": "text", "text": {"content": stripped[4:]}}]
+                    "rich_text": [{"type": "text", "text": {"content": stripped[4:].replace("**", "")}}]
                 },
             })
             continue
@@ -168,11 +213,7 @@ def _get_database_properties(token, database_id):
     date_col and multi_select_col are optional — returns None if no matching column.
     """
     url = f"https://api.notion.com/v1/databases/{database_id}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Notion-Version": NOTION_VERSION,
-    }
-    resp = _retry_request("GET", url, headers=headers)
+    resp = _retry_request("GET", url, headers=_notion_headers(token))
     title_col = None
     date_col = None
     multi_select_col = None
@@ -198,11 +239,7 @@ def _find_today_page(token, database_id, date_col, today):
         return None
 
     url = f"https://api.notion.com/v1/databases/{database_id}/query"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Notion-Version": NOTION_VERSION,
-    }
+    headers = _notion_headers(token)
     body = {
         "filter": {
             "property": date_col,
@@ -217,14 +254,6 @@ def _find_today_page(token, database_id, date_col, today):
     return None
 
 
-def _notion_headers(token):
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Notion-Version": NOTION_VERSION,
-    }
-
-
 def _append_blocks_to_page(token, page_id, blocks):
     """Append blocks in Notion-sized batches after page creation."""
     if not blocks:
@@ -233,6 +262,111 @@ def _append_blocks_to_page(token, page_id, blocks):
     headers = _notion_headers(token)
     for batch in _chunks(blocks, NOTION_MAX_CHILDREN_PER_REQUEST):
         _retry_request("PATCH", url, headers=headers, json={"children": batch})
+
+
+# Best-effort context fetch keeps its own tight budget: a single attempt with
+# a short timeout per request, instead of _retry_request's minutes-long worst
+# case — this runs before the (paid) AI call for a nice-to-have feature.
+CONTEXT_FETCH_TIMEOUT = 10
+
+
+def _context_request(method, url, **kwargs):
+    resp = requests.request(method, url, timeout=CONTEXT_FETCH_TIMEOUT, **kwargs)
+    resp.raise_for_status()
+    return resp
+
+
+def _block_plain_text(block):
+    """Concatenate the plain text of a block's rich_text array."""
+    payload = block.get(block.get("type", ""), {})
+    return "".join(
+        rt.get("plain_text") or rt.get("text", {}).get("content", "")
+        for rt in payload.get("rich_text", [])
+    )
+
+
+def _fetch_mainline_outline(token, page_id, max_chars=300):
+    """Extract the text of the 今日主线 section from a report page.
+
+    Returns None when the section cannot be located.
+    """
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children?page_size=30"
+    resp = _context_request("GET", url, headers=_notion_headers(token))
+    blocks = resp.json().get("results", [])
+    collected = []
+    in_section = False
+    for block in blocks:
+        btype = block.get("type", "")
+        text = _block_plain_text(block)
+        if btype in ("heading_1", "heading_2", "heading_3"):
+            if in_section:
+                break
+            in_section = "今日主线" in text
+            continue
+        if in_section and text:
+            collected.append(text)
+    if not collected:
+        return None
+    outline = "；".join(collected)
+    return outline[:max_chars]
+
+
+def get_previous_report_context():
+    """Fetch a short summary of the most recent report before today.
+
+    Used for cross-day continuity in the prompt. Best-effort: returns None on
+    any failure or missing configuration — it must never block publishing.
+    """
+    token = os.getenv("NOTION_TOKEN")
+    database_id = os.getenv("NOTION_DATABASE_ID")
+    if not token or not database_id:
+        return None
+    try:
+        schema_url = f"https://api.notion.com/v1/databases/{database_id}"
+        schema = _context_request("GET", schema_url, headers=_notion_headers(token)).json()
+        title_col = date_col = tags_col = None
+        for name, prop in schema.get("properties", {}).items():
+            ptype = prop.get("type")
+            if ptype == "title" and title_col is None:
+                title_col = name
+            elif ptype == "date" and date_col is None:
+                date_col = name
+            elif ptype == "multi_select" and tags_col is None:
+                tags_col = name
+        if not title_col or not date_col:
+            return None
+        url = f"https://api.notion.com/v1/databases/{database_id}/query"
+        body = {
+            "filter": {"property": date_col, "date": {"before": _today()}},
+            "sorts": [{"property": date_col, "direction": "descending"}],
+            "page_size": 1,
+        }
+        resp = _context_request("POST", url, headers=_notion_headers(token), json=body)
+        results = resp.json().get("results", [])
+        if not results:
+            return None
+        page = results[0]
+        props = page.get("properties", {})
+        title = "".join(
+            rt.get("plain_text") or rt.get("text", {}).get("content", "")
+            for rt in props.get(title_col, {}).get("title", [])
+        )
+        date_str = (props.get(date_col, {}).get("date") or {}).get("start", "")
+        tags = [
+            opt.get("name", "")
+            for opt in props.get(tags_col, {}).get("multi_select", [])
+        ] if tags_col else []
+
+        parts = [f"日期：{date_str}", f"标题：{title}"]
+        if tags:
+            parts.append(f"标签：{'、'.join(tags)}")
+        outline = _fetch_mainline_outline(token, page["id"])
+        if outline:
+            parts.append(f"主线：{outline}")
+        return "\n".join(parts)
+    except Exception as e:
+        logger.warning(f"Failed to fetch previous report context: {e}")
+        return None
 
 
 def push_to_notion(report):
@@ -256,7 +390,7 @@ def push_to_notion(report):
         raise ValueError("report content produced no Notion blocks")
     logger.info(f"Generated {len(blocks)} Notion blocks from {len(report['content'])} chars of Markdown")
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = _today()
     title_col, date_col, tags_col = _get_database_properties(token, database_id)
 
     # Idempotency: skip if today's page already exists
