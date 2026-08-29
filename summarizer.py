@@ -170,6 +170,7 @@ def generate_report(news_list, previous_context=None):
         base_url=AI_BASE_URL,
         api_key=AI_API_KEY,
         timeout=AI_TIMEOUT,
+        max_retries=0,
     )
 
     news_text = _build_news_text(news_list)

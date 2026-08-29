@@ -191,6 +191,24 @@ TAGS: AI, 测试
         assert len(calls) == 4
         assert sleeps == [8, 16, 32]
 
+    def test_disables_sdk_retries_to_avoid_nested_attempts(self, monkeypatch):
+        calls = []
+        client_options = {}
+        fake_client = _fake_openai_factory(
+            [_make_response(self.VALID_OUTPUT)], calls
+        )
+
+        def capturing_client(**kwargs):
+            client_options.update(kwargs)
+            return fake_client(**kwargs)
+
+        monkeypatch.setattr(summarizer, "AI_API_KEY", "dummy-key")
+        monkeypatch.setattr(summarizer, "OpenAI", capturing_client)
+
+        summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert client_options.get("max_retries") == 0
+
     def test_empty_choices_raises_runtime_error(self, monkeypatch):
         outcomes = [_make_response(None, with_choice=False)]
         calls, _ = self._patch(monkeypatch, outcomes)

@@ -104,7 +104,7 @@ FETCH_USER_AGENT = _env(
 # OpenRouter: base_url="https://openrouter.ai/api/v1", model="provider/model"
 AI_BASE_URL = _env("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
 AI_API_KEY = _env("AI_API_KEY") or _env("GEMINI_API_KEY") or _env("OPENROUTER_API_KEY", "")
-AI_MODEL = _env("AI_MODEL", "gemini-3.7-flash")
+AI_MODEL = _env("AI_MODEL", "gemini-3.6-flash")
 AI_TEMPERATURE = _env_float("AI_TEMPERATURE", 0.5)
 AI_TIMEOUT = _env_int("AI_TIMEOUT", 180)
 AI_MAX_TOKENS = _env_int("AI_MAX_TOKENS", 16384)

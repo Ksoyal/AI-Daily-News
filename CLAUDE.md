@@ -17,7 +17,7 @@ fetcher.py          ── 30s 超时抓取、User-Agent 伪装、Fallback URL�
     │                   24h 过滤（空源回退 72h 取最新3条，回退条目豁免截断）、
     │                   关键词/链接模式黑名单、跨源近似标题去重、100条截断
     ▼
-summarizer.py       ── OpenAI 兼容 API（默认 Google AI Studio / gemini-3.7-flash, 180s timeout）
+summarizer.py       ── OpenAI 兼容 API（默认 Google AI Studio / gemini-3.6-flash, 180s timeout）
     │                   Token 预算控制（32K chars, 按源轮询截断，包含 RSS 摘要与发布时效）
     │                   注入今日日期+星期、昨日日报概要（跨日连续性）
     │                   返回 {headline, tags, content}
@@ -61,7 +61,7 @@ daily_run_guard.py  ── CI 防重跑守卫（查询当天香港日期内是�
 
 ### `summarizer.py` — AI 摘要
 - `generate_report(news_list, previous_context=None)` → `dict{headline, tags, content}`
-- 模型: 默认 `gemini-3.7-flash` (Google AI Studio OpenAI-compatible endpoint)，可通过 `AI_BASE_URL` + `AI_MODEL` + API key 切换到 OpenRouter 等提供商，temperature=0.5
+- 模型: 默认 `gemini-3.6-flash` (Google AI Studio OpenAI-compatible endpoint)，可通过 `AI_BASE_URL` + `AI_MODEL` + API key 切换到 OpenRouter 等提供商，temperature=0.5
 - 用户消息首行注入今日日期+星期（按 `REPORT_TZ`），模型不再凭训练记忆猜日期
 - `previous_context` 非空时插入【上期日报概要】块（措辞用"上期"而非"昨日"——运行中断后取回的可能是数天前的日报），要求模型对已覆盖事件只写增量（跨日去重播）
 - `_format_news_item()`: 每条含 标题/链接/来源/发布时效（约N小时前）/摘要
@@ -69,7 +69,7 @@ daily_run_guard.py  ── CI 防重跑守卫（查询当天香港日期内是�
 - 输入包含 RSS 摘要，减少模型只凭标题补细节的风险
 - `_parse_report()`: 解析 `HEADLINE` / `TAGS` / body，支持中英文逗号分隔标签
 - Prompt 外部化在 `prompt.txt`，编辑器风格（见 Prompt 模块）
-- AI API 限流/连接错误/5xx（RateLimitError/APIConnectionError/InternalServerError）自动重试 3 次（8s/16s/32s 退避），免费模型过载不立即崩溃
+- AI API 限流/连接错误/5xx（RateLimitError/APIConnectionError/InternalServerError）由应用层自动重试 3 次（8s/16s/32s 退避）；SDK 内部重试关闭，避免双层重试放大请求数
 - 防范: news_list 为空时抛 ValueError（拒绝无中生有）；choices 为空或 content 为 None/空串时抛 RuntimeError
 
 ### `prompt.txt` — AI 日报模板
@@ -174,7 +174,7 @@ python -m pytest tests/test_fetcher.py -v
 | `FETCH_TIMEOUT` | RSS 抓取超时秒数 (默认 30) |
 | `STALE_WINDOW_HOURS` | 空源回退窗口小时数 (默认 72) |
 | `STALE_MAX_ENTRIES` | 空源回退最多取的条数 (默认 3) |
-| `AI_MODEL` | 模型名 (默认 gemini-3.7-flash) |
+| `AI_MODEL` | 模型名 (默认 gemini-3.6-flash) |
 | `AI_BASE_URL` | AI API 端点 (默认 Google AI Studio OpenAI-compatible endpoint) |
 | `AI_TEMPERATURE` | 模型温度 (默认 0.5) |
 | `AI_TIMEOUT` | AI 请求超时秒数 (默认 180) |

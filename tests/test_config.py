@@ -1,3 +1,4 @@
+import importlib
 import os
 import sys
 
@@ -7,6 +8,13 @@ import config
 
 
 class TestEnvLookup:
+    def test_empty_ai_model_uses_stable_default(self, monkeypatch):
+        monkeypatch.setenv("AI_MODEL", "")
+
+        reloaded_config = importlib.reload(config)
+
+        assert reloaded_config.AI_MODEL == "gemini-3.6-flash"
+
     def test_empty_env_value_uses_default(self, monkeypatch):
         monkeypatch.setenv("AI_MODEL", "")
 
