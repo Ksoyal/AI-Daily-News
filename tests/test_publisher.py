@@ -280,7 +280,7 @@ class TestGetDatabaseProperties:
 
         result = publisher._get_database_properties("secret", "database")
 
-        assert result == ("标题", "发布日期", "核心话题")
+        assert result == ("标题", "发布日期", "核心话题", [])
 
     def test_missing_title_column_raises_value_error(self, monkeypatch):
         schema = {
@@ -420,7 +420,7 @@ class TestPushToNotion:
 
         monkeypatch.setenv("NOTION_TOKEN", "secret")
         monkeypatch.setenv("NOTION_DATABASE_ID", "database")
-        monkeypatch.setattr(publisher, "_get_database_properties", lambda token, database_id: ("Name", "Date", None))
+        monkeypatch.setattr(publisher, "_get_database_properties", lambda token, database_id: ("Name", "Date", None, []))
         monkeypatch.setattr(publisher, "_find_today_page", lambda token, database_id, date_col, today: None)
         monkeypatch.setattr(publisher, "_md_to_notion_blocks", lambda content: blocks)
         monkeypatch.setattr(publisher, "_retry_request", fake_retry_request)

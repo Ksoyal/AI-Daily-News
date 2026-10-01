@@ -150,7 +150,7 @@ class TestBudgetTruncation:
 
 class TestGenerateReport:
     VALID_OUTPUT = """HEADLINE: 测试标题
-TAGS: AI, 测试
+TAGS: AI治理, 地缘政治
 ---
 ## 今日要闻
 正文内容"""
@@ -176,7 +176,7 @@ TAGS: AI, 测试
         report = summarizer.generate_report(self.SAMPLE_NEWS)
 
         assert report["headline"] == "测试标题"
-        assert report["tags"] == ["AI", "测试"]
+        assert report["tags"] == ["AI治理", "地缘政治"]
         assert report["content"] == "## 今日要闻\n正文内容"
         assert len(calls) == 3
         assert sleeps == [8, 16]
@@ -365,7 +365,7 @@ class TestReportParsing:
 
     def test_parse_valid_output(self):
         raw = """HEADLINE: 今日关键变化
-TAGS: AI，市场, 政策
+TAGS: AI治理，资本市场, 贸易政策
 ---
 ## 今日要闻
 正文内容"""
@@ -374,7 +374,7 @@ TAGS: AI，市场, 政策
 
         assert result == {
             "headline": "今日关键变化",
-            "tags": ["AI", "市场", "政策"],
+            "tags": ["AI治理", "资本市场", "贸易政策"],
             "content": "## 今日要闻\n正文内容",
         }
 
