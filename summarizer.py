@@ -4,6 +4,7 @@ import sys
 import time
 from datetime import datetime
 from openai import OpenAI, RateLimitError, APIConnectionError, InternalServerError
+from topic_taxonomy import normalize_tags, topic_prompt
 
 from config import (AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_TEMPERATURE, AI_TIMEOUT,
                     AI_MAX_TOKENS, AI_MAX_INPUT_CHARS, AI_MIN_PER_SOURCE, AI_SYSTEM_PROMPT,
@@ -130,7 +131,11 @@ def _parse_report(raw):
 
     headline = headline_match.group(1).strip() if headline_match else "AI 晨报"
     tags_raw = tags_match.group(1).strip() if tags_match else ""
-    tags = [t.strip() for t in tags_raw.replace("，", ",").split(",") if t.strip()][:3]
+    tags, rejected = normalize_tags([
+        t.strip() for t in tags_raw.replace("，", ",").split(",") if t.strip()
+    ])
+    if rejected:
+        logger.warning("Unapproved core topics pending taxonomy review: %r", rejected)
 
     body_match = re.search(r'^---\s*\n(.+)$', raw, re.MULTILINE | re.DOTALL)
     content = body_match.group(1).strip() if body_match else raw
@@ -203,7 +208,7 @@ def generate_report(news_list, previous_context=None):
             resp = client.chat.completions.create(
                 model=AI_MODEL,
                 messages=[
-                    {"role": "system", "content": AI_SYSTEM_PROMPT},
+                    {"role": "system", "content": AI_SYSTEM_PROMPT + "\n\n" + topic_prompt()},
                     {"role": "user", "content": user_message},
                 ],
                 temperature=AI_TEMPERATURE,

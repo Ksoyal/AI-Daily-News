@@ -5,6 +5,7 @@ import sys
 import time
 import requests
 from datetime import datetime
+from topic_taxonomy import normalize_tags
 
 from config import (
     NOTION_VERSION, HTTP_TIMEOUT, HTTP_RETRIES, HTTP_RETRY_BACKOFF,
@@ -207,7 +208,7 @@ def _is_decorative_line(line):
 
 
 def _get_database_properties(token, database_id):
-    """Fetch database schema and return (title_col, date_col, multi_select_col).
+    """Fetch schema and return title/date/tag column names plus tag options.
 
     title_col is mandatory — raises ValueError if missing.
     date_col and multi_select_col are optional — returns None if no matching column.
@@ -217,6 +218,7 @@ def _get_database_properties(token, database_id):
     title_col = None
     date_col = None
     multi_select_col = None
+    tag_options = []
     for name, prop in resp.json().get("properties", {}).items():
         ptype = prop.get("type")
         if ptype == "title" and title_col is None:
@@ -225,9 +227,28 @@ def _get_database_properties(token, database_id):
             date_col = name
         elif ptype == "multi_select" and multi_select_col is None:
             multi_select_col = name
+            tag_options = prop.get("multi_select", {}).get("options", [])
+        # Prefer the requested 核心话题 field over unrelated multi_select fields.
+        if ptype == "multi_select" and name == "核心话题":
+            multi_select_col = name
+            tag_options = prop.get("multi_select", {}).get("options", [])
     if title_col is None:
         raise ValueError("Database schema has no 'title' property — check NOTION_DATABASE_ID")
-    return title_col, date_col, multi_select_col
+    return title_col, date_col, multi_select_col, tag_options
+
+
+def _topic_option_ids(tags, options):
+    """Only write reviewed canonical topics that already have a Notion option ID."""
+    canonical, rejected = normalize_tags(tags)
+    if rejected:
+        logger.warning("Unapproved core topics pending taxonomy review: %r", rejected)
+    # Exact canonical names only: don't keep writing legacy aliases into Notion.
+    existing = {opt["name"]: opt["id"] for opt in options
+                if opt.get("name") and opt.get("id")}
+    missing = [tag for tag in canonical if tag not in existing]
+    if missing:
+        logger.warning("Approved core topics missing Notion options; configure before use: %r", missing)
+    return [{"id": existing[tag]} for tag in canonical if tag in existing]
 
 
 def _find_today_page(token, database_id, date_col, today):
@@ -391,7 +412,7 @@ def push_to_notion(report):
     logger.info(f"Generated {len(blocks)} Notion blocks from {len(report['content'])} chars of Markdown")
 
     today = _today()
-    title_col, date_col, tags_col = _get_database_properties(token, database_id)
+    title_col, date_col, tags_col, tag_options = _get_database_properties(token, database_id)
 
     # Idempotency: skip if today's page already exists
     existing_url = _find_today_page(token, database_id, date_col, today)
@@ -412,9 +433,9 @@ def push_to_notion(report):
         logger.info("No date property found in database — skipping 发布日期")
 
     if tags_col and report.get("tags"):
-        properties[tags_col] = {
-            "multi_select": [{"name": tag} for tag in report["tags"]]
-        }
+        topic_ids = _topic_option_ids(report["tags"], tag_options)
+        if topic_ids:
+            properties[tags_col] = {"multi_select": topic_ids}
     elif not tags_col:
         logger.info("No multi_select property found in database — skipping 核心话题")
 
