@@ -107,6 +107,9 @@ AI_API_KEY = _env("AI_API_KEY") or _env("GEMINI_API_KEY") or _env("OPENROUTER_AP
 AI_MODEL = _env("AI_MODEL", "gemini-3.6-flash")
 AI_TEMPERATURE = _env_float("AI_TEMPERATURE", 0.5)
 AI_TIMEOUT = _env_int("AI_TIMEOUT", 180)
+# Three delayed retries, still only four model calls per pipeline run.
+# Wait long enough for short provider outages to clear without retrying publication.
+AI_RETRY_DELAYS = (60, 300, 900)
 AI_MAX_TOKENS = _env_int("AI_MAX_TOKENS", 16384)
 AI_MAX_INPUT_CHARS = _env_int("AI_MAX_INPUT_CHARS", 32000)
 # Per-source floor: when truncating for token budget, try to keep at least

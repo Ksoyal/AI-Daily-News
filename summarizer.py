@@ -8,7 +8,7 @@ from topic_taxonomy import normalize_tags, topic_prompt
 
 from config import (AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_TEMPERATURE, AI_TIMEOUT,
                     AI_MAX_TOKENS, AI_MAX_INPUT_CHARS, AI_MIN_PER_SOURCE, AI_SYSTEM_PROMPT,
-                    REPORT_TZ)
+                    AI_RETRY_DELAYS, REPORT_TZ)
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +201,10 @@ def generate_report(news_list, previous_context=None):
         f"以下是最近的新闻列表（每条已标注发布时效），请生成日报：\n\n{news_text}"
     )
 
-    # Retry on transient errors (rate limit, connection, server errors)
-    max_retries = 3
+    # Retry only generation, before any Notion write or push notification.
+    # Longer, bounded waits give overloaded providers time to recover while
+    # preserving the four-request budget (SDK retries remain disabled).
+    max_retries = len(AI_RETRY_DELAYS)
     for attempt in range(max_retries + 1):
         try:
             resp = client.chat.completions.create(
@@ -217,7 +219,7 @@ def generate_report(news_list, previous_context=None):
             break  # success → stop retrying
         except (RateLimitError, APIConnectionError, InternalServerError) as e:
             if attempt < max_retries:
-                delay = 2 ** (attempt + 3)  # 8, 16, 32 seconds
+                delay = AI_RETRY_DELAYS[attempt]
                 logger.warning(f"AI API {type(e).__name__}, retrying in {delay}s "
                                f"(attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)

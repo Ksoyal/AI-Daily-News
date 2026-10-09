@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+import httpx
+from openai import AuthenticationError, BadRequestError, APITimeoutError
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -179,7 +181,7 @@ TAGS: AI治理, 地缘政治
         assert report["tags"] == ["AI治理", "地缘政治"]
         assert report["content"] == "## 今日要闻\n正文内容"
         assert len(calls) == 3
-        assert sleeps == [8, 16]
+        assert sleeps == [60, 300]
 
     def test_rate_limit_retries_exhausted_propagates(self, monkeypatch):
         outcomes = [FakeRateLimitError() for _ in range(4)]
@@ -189,7 +191,62 @@ TAGS: AI治理, 地缘政治
             summarizer.generate_report(self.SAMPLE_NEWS)
 
         assert len(calls) == 4
-        assert sleeps == [8, 16, 32]
+        assert sleeps == [60, 300, 900]
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 504])
+    def test_server_outage_recovers_on_last_delayed_attempt(self, monkeypatch, status):
+        response = httpx.Response(status, request=httpx.Request("POST", "https://example.com"))
+        error = summarizer.InternalServerError("overloaded", response=response, body=None)
+        calls, sleeps = self._patch(monkeypatch, [error] * 3 + [_make_response(self.VALID_OUTPUT)])
+
+        report = summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert report["headline"] == "测试标题"
+        assert len(calls) == 4
+        assert sleeps == [60, 300, 900]
+        # Retry the same editorial input, without switching model or provider.
+        assert all(call == calls[0] for call in calls)
+
+    def test_server_outage_exhaustion_has_no_extra_request_or_sleep(self, monkeypatch):
+        response = httpx.Response(503, request=httpx.Request("POST", "https://example.com"))
+        error = summarizer.InternalServerError("overloaded", response=response, body=None)
+        calls, sleeps = self._patch(monkeypatch, [error] * 4)
+
+        with pytest.raises(summarizer.InternalServerError):
+            summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert len(calls) == 4
+        assert sleeps == [60, 300, 900]
+
+    @pytest.mark.parametrize("error_class", [summarizer.APIConnectionError, APITimeoutError])
+    def test_network_failure_uses_delayed_retry(self, monkeypatch, error_class):
+        error = error_class(request=httpx.Request("POST", "https://example.com"))
+        calls, sleeps = self._patch(monkeypatch, [error, _make_response(self.VALID_OUTPUT)])
+
+        summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert len(calls) == 2
+        assert sleeps == [60]
+
+    @pytest.mark.parametrize("status,error_class", [(400, BadRequestError), (401, AuthenticationError)])
+    def test_permanent_errors_fail_immediately(self, monkeypatch, status, error_class):
+        response = httpx.Response(status, request=httpx.Request("POST", "https://example.com"))
+        error = error_class("invalid request", response=response, body=None)
+        calls, sleeps = self._patch(monkeypatch, [error])
+
+        with pytest.raises(error_class):
+            summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert len(calls) == 1
+        assert sleeps == []
+
+    def test_success_does_not_wait(self, monkeypatch):
+        calls, sleeps = self._patch(monkeypatch, [_make_response(self.VALID_OUTPUT)])
+
+        summarizer.generate_report(self.SAMPLE_NEWS)
+
+        assert len(calls) == 1
+        assert sleeps == []
 
     def test_disables_sdk_retries_to_avoid_nested_attempts(self, monkeypatch):
         calls = []

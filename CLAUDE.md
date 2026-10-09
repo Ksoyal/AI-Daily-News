@@ -69,7 +69,7 @@ daily_run_guard.py  ── CI 防重跑守卫（查询当天香港日期内是�
 - 输入包含 RSS 摘要，减少模型只凭标题补细节的风险
 - `_parse_report()`: 解析 `HEADLINE` / `TAGS` / body，支持中英文逗号分隔标签
 - Prompt 外部化在 `prompt.txt`，编辑器风格（见 Prompt 模块）
-- AI API 限流/连接错误/5xx（RateLimitError/APIConnectionError/InternalServerError）由应用层自动重试 3 次（8s/16s/32s 退避）；SDK 内部重试关闭，避免双层重试放大请求数
+- AI API 限流/连接错误/5xx（RateLimitError/APIConnectionError/InternalServerError）由应用层延迟重试 3 次（60s/300s/900s 等待，最多 4 次请求）；SDK 内部重试关闭，避免双层重试放大请求数
 - 防范: news_list 为空时抛 ValueError（拒绝无中生有）；choices 为空或 content 为 None/空串时抛 RuntimeError
 
 ### `prompt.txt` — AI 日报模板
@@ -112,7 +112,7 @@ daily_run_guard.py  ── CI 防重跑守卫（查询当天香港日期内是�
 - 只能看到已完成的 run，并发场景靠 daily_run.yml 的 `concurrency` 组串行化兜底
 
 ### `.github/workflows/`
-- `daily_run.yml` — 主流水线：schedule (兜底) + workflow_dispatch + repository_dispatch；`concurrency: daily-run` 组强制串行（同时最多 1 个运行 + 1 个等待，更多的 pending run 被 GitHub 自动取消并显示 Cancelled——非故障；等待的 run 执行时守卫可见前一个成功 run 而跳过）；自动触发先跑 daily_run_guard.py 判重；发布前先跑单元测试；timeout 30 分钟（覆盖 AI 重试最坏路径 ≈13 分钟）
+- `daily_run.yml` — 主流水线：schedule (兜底) + workflow_dispatch + repository_dispatch；`concurrency: daily-run` 组强制串行（同时最多 1 个运行 + 1 个等待，更多的 pending run 被 GitHub 自动取消并显示 Cancelled——非故障；等待的 run 执行时守卫可见前一个成功 run 而跳过）；自动触发先跑 daily_run_guard.py 判重；发布前先跑单元测试；timeout 60 分钟（默认 AI 重试名义预算 33 分钟，另留抓取/安装/测试/发布预算）
 - `precise_trigger.yml` — 守门员：每 15 分钟检查时间，UTC 00 时整个小时内触发主流水线（窗口放宽应对 cron 高峰延迟，重复 dispatch 由 concurrency + 守卫去重）；dispatch 失败会让 workflow 失败
 - `tests.yml` — push / pull_request 自动运行单元测试
 - Secrets: `AI_API_KEY` 或 `GEMINI_API_KEY` 或 `OPENROUTER_API_KEY`, `WORKFLOW_PAT`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `PUSH_KEY`；可选 `AI_BASE_URL`, `AI_MODEL`, `AI_TEMPERATURE`, `AI_TIMEOUT`, `AI_MAX_TOKENS`, `AI_MAX_INPUT_CHARS`
