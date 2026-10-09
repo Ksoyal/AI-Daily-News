@@ -22,8 +22,10 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    # 覆盖最坏情况：AI 重试满 4 次 × 180s + 退避 ≈ 13 分钟，加抓取/安装/测试
-    timeout-minutes: 30
+    # 默认 AI 名义预算：4 × 180s + 60/300/900s 等待 = 33 分钟；
+    # 另留 27 分钟给抓取 fallback、安装/测试和 Notion 发布。
+    # 若增大 AI_TIMEOUT，须同步复核此预算。
+    timeout-minutes: 60
 
     steps:
       - name: Checkout

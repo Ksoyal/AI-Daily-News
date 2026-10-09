@@ -116,3 +116,57 @@ class TestMainOrchestration:
         main.main()
 
         assert received["ctx"] == "昨日标题：X"
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+def test_delayed_generation_never_repeats_publish_or_push(monkeypatch, notify_calls, recovers):
+    """Exercise the real retry loop through main, with all network calls stubbed."""
+    import httpx
+    import summarizer
+    from types import SimpleNamespace
+
+    requests = []
+    published = []
+    waits = []
+    response = httpx.Response(503, request=httpx.Request("POST", "https://example.com"))
+    error = summarizer.InternalServerError("overloaded", response=response, body=None)
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        if len(requests) < 4 or not recovers:
+            raise error
+        return SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
+                content="HEADLINE: 今日关键变化\nTAGS: AI治理, 地缘政治\n---\n## 今日要闻\n正文"))],
+            model="fake", usage=None,
+        )
+
+    def sleep(delay):
+        # Nothing downstream can run while the provider is still failing.
+        assert published == []
+        assert notify_calls == []
+        waits.append(delay)
+
+    monkeypatch.setattr(main, "fetch_news", lambda: SAMPLE_NEWS)
+    monkeypatch.setattr(main, "generate_report", summarizer.generate_report)
+    monkeypatch.setattr(main, "push_to_notion", lambda report: published.append(report) or {"url": "https://notion.so/page"})
+    monkeypatch.setattr(summarizer, "AI_API_KEY", "test-key")
+    monkeypatch.setattr(summarizer, "OpenAI", lambda **kwargs: SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    monkeypatch.setattr(summarizer.time, "sleep", sleep)
+
+    if recovers:
+        main.main()
+        assert len(published) == 1
+        assert len(notify_calls) == 1
+        assert notify_calls[0][0].startswith("✅")
+    else:
+        with pytest.raises(SystemExit) as exc_info:
+            main.main()
+        assert exc_info.value.code == 1
+        assert published == []
+        assert len(notify_calls) == 1
+        assert notify_calls[0][0].startswith("❌")
+
+    assert len(requests) == 4
+    assert waits == [60, 300, 900]
