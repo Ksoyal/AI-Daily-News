@@ -39,7 +39,7 @@ daily_run_guard.py  ── CI 防重跑守卫（查询当天香港日期内是�
 - `RSS_SOURCES`: 12 个源，每个支持 `urls` 列表（fallback 机制）与可选 `exclude_link_patterns`（按链接子串过滤非新闻栏目）
 - `EXCLUDE_KEYWORDS`, `MAX_ENTRIES`, `RSS_SUMMARY_MAX_CHARS`, `FETCH_TIMEOUT`, `FETCH_USER_AGENT` — RSS 参数
 - `STALE_WINDOW_HOURS` / `STALE_MAX_ENTRIES` — 空源回退窗口（默认 72h / 3 条）
-- `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`, `AI_TEMPERATURE`, `AI_TIMEOUT`, `AI_MAX_TOKENS` — AI 参数
+- `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`, `AI_FALLBACK_MODEL`, `AI_TEMPERATURE`, `AI_TIMEOUT`, `AI_MAX_TOKENS` — AI 参数
 - `AI_MAX_INPUT_CHARS`, `AI_MIN_PER_SOURCE` — Token 预算控制
 - `AI_SYSTEM_PROMPT` — 按优先级加载：`AI_SYSTEM_PROMPT` 环境变量 > `AI_PROMPT_FILE` 路径 > `prompt.txt` > 内置 fallback
 - `NOTION_VERSION`, `HTTP_TIMEOUT`, `HTTP_RETRIES`, `HTTP_RETRY_BACKOFF`, `NOTIFY_TIMEOUT` — 下游参数
@@ -61,7 +61,7 @@ daily_run_guard.py  ── CI 防重跑守卫（查询当天香港日期内是�
 
 ### `summarizer.py` — AI 摘要
 - `generate_report(news_list, previous_context=None)` → `dict{headline, tags, content}`
-- 模型: 默认 `gemini-3.6-flash` (Google AI Studio OpenAI-compatible endpoint)，可通过 `AI_BASE_URL` + `AI_MODEL` + API key 切换到 OpenRouter 等提供商，temperature=0.5
+- 模型: 默认 `gemini-3.6-flash` (Google AI Studio OpenAI-compatible endpoint)，可通过 `AI_BASE_URL` + `AI_MODEL` + API key 切换到 OpenRouter 等提供商，其他模型 temperature=0.5；当前 Gemini 3.6 Flash / 3.5 Flash-Lite 按官方指引省略已弃用的 temperature 参数
 - 用户消息首行注入今日日期+星期（按 `REPORT_TZ`），模型不再凭训练记忆猜日期
 - `previous_context` 非空时插入【上期日报概要】块（措辞用"上期"而非"昨日"——运行中断后取回的可能是数天前的日报），要求模型对已覆盖事件只写增量（跨日去重播）
 - `_format_news_item()`: 每条含 标题/链接/来源/发布时效（约N小时前）/摘要
@@ -69,7 +69,8 @@ daily_run_guard.py  ── CI 防重跑守卫（查询当天香港日期内是�
 - 输入包含 RSS 摘要，减少模型只凭标题补细节的风险
 - `_parse_report()`: 解析 `HEADLINE` / `TAGS` / body，支持中英文逗号分隔标签
 - Prompt 外部化在 `prompt.txt`，编辑器风格（见 Prompt 模块）
-- AI API 限流/连接错误/5xx（RateLimitError/APIConnectionError/InternalServerError）由应用层延迟重试 3 次（60s/300s/900s 等待，最多 4 次请求）；SDK 内部重试关闭，避免双层重试放大请求数
+- AI API 限流/连接错误/5xx（RateLimitError/APIConnectionError/InternalServerError）才重试。未配置备用模型时等待 60s/300s/900s，最多 4 次请求；SDK 内部重试关闭
+- `AI_FALLBACK_MODEL` 默认留空，须先核实项目访问权限、额度和计费再显式启用。推荐 `gemini-3.5-flash-lite`；启用后主模型最多 2 次（间隔 60s），仍失败即切换备用最多 2 次（间隔 60s），总数仍为 4。只使用同一个 Google 官方端点、客户端和密钥；不切换供应商。认证、参数错误和无效响应直接失败，发布/推送仍在生成重试之外。详见 `docs/gemini-model-fallback.md`
 - 防范: news_list 为空时抛 ValueError（拒绝无中生有）；choices 为空或 content 为 None/空串时抛 RuntimeError
 
 ### `prompt.txt` — AI 日报模板
@@ -115,6 +116,7 @@ daily_run_guard.py  ── CI 防重跑守卫（查询当天香港日期内是�
 - `daily_run.yml` — 主流水线：schedule (兜底) + workflow_dispatch + repository_dispatch；`concurrency: daily-run` 组强制串行（同时最多 1 个运行 + 1 个等待，更多的 pending run 被 GitHub 自动取消并显示 Cancelled——非故障；等待的 run 执行时守卫可见前一个成功 run 而跳过）；自动触发先跑 daily_run_guard.py 判重；发布前先跑单元测试；timeout 60 分钟（默认 AI 重试名义预算 33 分钟，另留抓取/安装/测试/发布预算）
 - `precise_trigger.yml` — 守门员：每 15 分钟检查时间，UTC 00 时整个小时内触发主流水线（窗口放宽应对 cron 高峰延迟，重复 dispatch 由 concurrency + 守卫去重）；dispatch 失败会让 workflow 失败
 - `tests.yml` — push / pull_request 自动运行单元测试
+- Variables: `AI_FALLBACK_MODEL`（非敏感模型名，默认未设置；核实账户后再开启）
 - Secrets: `AI_API_KEY` 或 `GEMINI_API_KEY` 或 `OPENROUTER_API_KEY`, `WORKFLOW_PAT`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `PUSH_KEY`；可选 `AI_BASE_URL`, `AI_MODEL`, `AI_TEMPERATURE`, `AI_TIMEOUT`, `AI_MAX_TOKENS`, `AI_MAX_INPUT_CHARS`
 
 ## 运行
@@ -142,6 +144,7 @@ python -m pytest tests/test_fetcher.py -v
 `tests/` 目录，pytest 框架，无需网络：
 - `test_config.py` — 空环境变量不覆盖默认配置
 - `test_fetcher.py` — `_parse_published()` 时间解析、RSS 摘要清洗、fallback URL、24h 窗口/黑名单/MAX_ENTRIES 过滤、空源 72h 回退、跨源去重、链接模式过滤
+- `test_model_fallback.py` — 主/备瞬时故障恢复、总请求预算、永久错误/无效响应立即失败、相同输入和单一客户端、配置校验、发布/推送不重入
 - `test_summarizer.py` — `_build_news_text()` 预算截断（保底/去摘要/截标题）、AI 输出解析、`generate_report()` 重试与空响应防护、日期首行/时效行/昨日概要块
 - `test_publisher.py` — `_parse_rich_text()` 粗体/链接/长文本分片、`_md_to_notion_blocks()` 全部块类型、`_retry_request()` 重试矩阵、schema 发现、幂等跳过、昨日页面查询
 - `test_main.py` — 空新闻中止、成功/跳过/失败三种通知路径、昨日概要透传
@@ -175,8 +178,9 @@ python -m pytest tests/test_fetcher.py -v
 | `STALE_WINDOW_HOURS` | 空源回退窗口小时数 (默认 72) |
 | `STALE_MAX_ENTRIES` | 空源回退最多取的条数 (默认 3) |
 | `AI_MODEL` | 模型名 (默认 gemini-3.6-flash) |
+| `AI_FALLBACK_MODEL` | 单个备用 Gemini 模型，默认留空关闭；核实账户后推荐 gemini-3.5-flash-lite |
 | `AI_BASE_URL` | AI API 端点 (默认 Google AI Studio OpenAI-compatible endpoint) |
-| `AI_TEMPERATURE` | 模型温度 (默认 0.5) |
+| `AI_TEMPERATURE` | 其他模型的温度 (默认 0.5)；Gemini 3.6 Flash / 3.5 Flash-Lite 省略此参数 |
 | `AI_TIMEOUT` | AI 请求超时秒数 (默认 180) |
 | `AI_MAX_TOKENS` | AI 最大输出 token (默认 16384) |
 | `AI_MAX_INPUT_CHARS` | AI 输入字符预算 (默认 32000) |

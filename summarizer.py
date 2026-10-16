@@ -8,7 +8,8 @@ from topic_taxonomy import normalize_tags, topic_prompt
 
 from config import (AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_TEMPERATURE, AI_TIMEOUT,
                     AI_MAX_TOKENS, AI_MAX_INPUT_CHARS, AI_MIN_PER_SOURCE, AI_SYSTEM_PROMPT,
-                    AI_RETRY_DELAYS, REPORT_TZ)
+                    AI_RETRY_DELAYS, AI_FALLBACK_MODEL, AI_FAILOVER_RETRY_DELAYS,
+                    GEMINI_OPENAI_BASE_URL, REPORT_TZ)
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,39 @@ def _parse_report(raw):
     }
 
 
+def _fallback_model():
+    """Validate the opt-in Gemini fallback before making any model request."""
+    if not AI_FALLBACK_MODEL or AI_FALLBACK_MODEL == AI_MODEL:
+        return None
+    if AI_BASE_URL.rstrip("/") != GEMINI_OPENAI_BASE_URL.rstrip("/"):
+        raise ValueError("AI_FALLBACK_MODEL requires the official Google Gemini OpenAI endpoint")
+    for model in (AI_MODEL, AI_FALLBACK_MODEL):
+        if not re.fullmatch(r"gemini-[A-Za-z0-9._-]+", model):
+            raise ValueError("AI_FALLBACK_MODEL requires one Gemini model ID for each model")
+    return AI_FALLBACK_MODEL
+
+
+def _request_completion(client, model, messages, retry_delays):
+    """Retry generation only; never repeat publication or notifications."""
+    options = {"model": model, "messages": messages, "max_tokens": AI_MAX_TOKENS}
+    # Google ignores these sampling parameters on these two current models.
+    # Preserve the existing setting for other models/providers.
+    if not (AI_BASE_URL.rstrip("/") == GEMINI_OPENAI_BASE_URL.rstrip("/")
+            and model in {"gemini-3.6-flash", "gemini-3.5-flash-lite"}):
+        options["temperature"] = AI_TEMPERATURE
+    logger.info("Generating AI report with model=%s", model)
+    for attempt in range(len(retry_delays) + 1):
+        try:
+            return client.chat.completions.create(**options)
+        except (RateLimitError, APIConnectionError, InternalServerError) as error:
+            if attempt == len(retry_delays):
+                raise
+            delay = retry_delays[attempt]
+            logger.warning("AI model=%s %s, retrying in %ss (retry %s/%s)",
+                           model, type(error).__name__, delay, attempt + 1, len(retry_delays))
+            time.sleep(delay)
+
+
 def generate_report(news_list, previous_context=None):
     """Send news list to LLM and return structured daily report.
 
@@ -170,6 +204,8 @@ def generate_report(news_list, previous_context=None):
 
     if not AI_API_KEY:
         raise ValueError("AI_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY must be set")
+
+    fallback = _fallback_model()
 
     client = OpenAI(
         base_url=AI_BASE_URL,
@@ -201,30 +237,21 @@ def generate_report(news_list, previous_context=None):
         f"以下是最近的新闻列表（每条已标注发布时效），请生成日报：\n\n{news_text}"
     )
 
-    # Retry only generation, before any Notion write or push notification.
-    # Longer, bounded waits give overloaded providers time to recover while
-    # preserving the four-request budget (SDK retries remain disabled).
-    max_retries = len(AI_RETRY_DELAYS)
-    for attempt in range(max_retries + 1):
-        try:
-            resp = client.chat.completions.create(
-                model=AI_MODEL,
-                messages=[
-                    {"role": "system", "content": AI_SYSTEM_PROMPT + "\n\n" + topic_prompt()},
-                    {"role": "user", "content": user_message},
-                ],
-                temperature=AI_TEMPERATURE,
-                max_tokens=AI_MAX_TOKENS,
-            )
-            break  # success → stop retrying
-        except (RateLimitError, APIConnectionError, InternalServerError) as e:
-            if attempt < max_retries:
-                delay = AI_RETRY_DELAYS[attempt]
-                logger.warning(f"AI API {type(e).__name__}, retrying in {delay}s "
-                               f"(attempt {attempt + 1}/{max_retries})")
-                time.sleep(delay)
-            else:
-                raise
+    messages = [
+        {"role": "system", "content": AI_SYSTEM_PROMPT + "\n\n" + topic_prompt()},
+        {"role": "user", "content": user_message},
+    ]
+    # Share one client, endpoint, key and editorial input. With fallback enabled
+    # the four-call budget is split 2 + 2, never multiplied across models.
+    delays = AI_FAILOVER_RETRY_DELAYS if fallback else AI_RETRY_DELAYS
+    try:
+        resp = _request_completion(client, AI_MODEL, messages, delays)
+    except (RateLimitError, APIConnectionError, InternalServerError) as error:
+        if not fallback:
+            raise
+        logger.warning("AI primary model=%s exhausted after %s; switching to fallback=%s",
+                       AI_MODEL, type(error).__name__, fallback)
+        resp = _request_completion(client, fallback, messages, AI_FAILOVER_RETRY_DELAYS)
 
     if not resp.choices:
         raise RuntimeError(

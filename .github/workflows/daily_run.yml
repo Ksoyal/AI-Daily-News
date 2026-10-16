@@ -64,6 +64,8 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
+          # Set this repository variable only after project access/billing verification.
+          AI_FALLBACK_MODEL: ${{ vars.AI_FALLBACK_MODEL }}
           AI_TEMPERATURE: ${{ secrets.AI_TEMPERATURE }}
           AI_TIMEOUT: ${{ secrets.AI_TIMEOUT }}
           AI_MAX_TOKENS: ${{ secrets.AI_MAX_TOKENS }}
