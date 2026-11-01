@@ -1,0 +1,8 @@
+Codex GitHub connection test
+
+Purpose: Verify that the connected GitHub account can create a commit and read it back.
+Repository: Ksoyal/AI-Daily-News
+Branch: codex/connection-test-20261101-172756
+Created: 2026-11-01 17:27:56 Asia/Shanghai
+
+This file contains only test text. No local project files, credentials, or personal data were uploaded.
