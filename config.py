@@ -102,12 +102,19 @@ FETCH_USER_AGENT = _env(
 # Google AI Studio (OpenAI-compatible endpoint)
 # Get key at https://aistudio.google.com/apikey
 # OpenRouter: base_url="https://openrouter.ai/api/v1", model="provider/model"
-AI_BASE_URL = _env("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+AI_BASE_URL = _env("AI_BASE_URL", GEMINI_OPENAI_BASE_URL)
 AI_API_KEY = _env("AI_API_KEY") or _env("GEMINI_API_KEY") or _env("OPENROUTER_API_KEY", "")
 AI_MODEL = _env("AI_MODEL", "gemini-3.6-flash")
+# Opt in only after confirming this project's access, quota and billing tier.
+# A public free-tier listing does not establish that this account is free.
+AI_FALLBACK_MODEL = _env("AI_FALLBACK_MODEL", "")
+# With fallback enabled, each model gets one retry: at most 2 + 2 requests.
+# Switch immediately after the primary's retry fails, rather than waiting 21 min.
+AI_FAILOVER_RETRY_DELAYS = (60,)
 AI_TEMPERATURE = _env_float("AI_TEMPERATURE", 0.5)
 AI_TIMEOUT = _env_int("AI_TIMEOUT", 180)
-# Three delayed retries, still only four model calls per pipeline run.
+# Without a distinct fallback, three delayed retries, four model calls total.
 # Wait long enough for short provider outages to clear without retrying publication.
 AI_RETRY_DELAYS = (60, 300, 900)
 AI_MAX_TOKENS = _env_int("AI_MAX_TOKENS", 16384)

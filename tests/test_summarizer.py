@@ -14,6 +14,14 @@ import summarizer
 import config
 from config import REPORT_TZ
 
+@pytest.fixture(autouse=True)
+def legacy_single_model_config(monkeypatch):
+    """Legacy retry tests must not inherit a developer's opt-in fallback."""
+    monkeypatch.setattr(summarizer, "AI_FALLBACK_MODEL", "")
+    monkeypatch.setattr(summarizer, "AI_MODEL", "gemini-3.6-flash")
+    monkeypatch.setattr(summarizer, "AI_BASE_URL", config.GEMINI_OPENAI_BASE_URL)
+
+
 FROZEN_NOW = datetime(2026, 7, 24, 9, 0, tzinfo=REPORT_TZ)
 
 

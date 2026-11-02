@@ -150,6 +150,7 @@ def test_delayed_generation_never_repeats_publish_or_push(monkeypatch, notify_ca
     monkeypatch.setattr(main, "fetch_news", lambda: SAMPLE_NEWS)
     monkeypatch.setattr(main, "generate_report", summarizer.generate_report)
     monkeypatch.setattr(main, "push_to_notion", lambda report: published.append(report) or {"url": "https://notion.so/page"})
+    monkeypatch.setattr(summarizer, "AI_FALLBACK_MODEL", "")
     monkeypatch.setattr(summarizer, "AI_API_KEY", "test-key")
     monkeypatch.setattr(summarizer, "OpenAI", lambda **kwargs: SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
